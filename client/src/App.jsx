@@ -9,28 +9,37 @@
 import { useState, useEffect } from "react"; // React hooks for state and side effects
 import Register from "./components/Register"; // User registration component
 import Login from "./components/Login";       // User login component
-import BettingHistory from "./components/BettingHistory";
-import { fetchOdds, placeBet as placeBetApi, logout } from "./api"; // API communication functions
-import "./App.css";                          // Component styles
-import Leaderboard from './components/Leaderboard';
+import BettingHistory from "./components/BettingHistory"; // User betting history component
+import Leaderboard from './components/Leaderboard'; // Global leaderboard component
+import { fetchOdds, placeBet as placeBetApi } from "./api"; // API communication functions
+import "./App.css"; // Component styles
 
 function App() {
-  // Application state
-  const [user, setUser] = useState(null);           // Logged in user data
+  // Authentication state
+  const [user, setUser] = useState(null); // Logged in user data
   const [showRegister, setShowRegister] = useState(false); // Toggle between login/register
-  const [odds, setOdds] = useState([]);             // Available betting odds
-  const [error, setError] = useState(null);
-  const [selectedSport, setSelectedSport] = useState('all');
-  const [selectedAmount, setSelectedAmount] = useState(5);
-  const [customAmount, setCustomAmount] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pagination, setPagination] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [expandedBets, setExpandedBets] = useState({});
-  const [betsRefreshTrigger, setBetsRefreshTrigger] = useState(0);
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [selectedTeam, setSelectedTeam] = useState(null);
 
+  // Betting interface state
+  const [odds, setOdds] = useState([]); // Available betting odds
+  const [selectedSport, setSelectedSport] = useState('all'); // Currently selected sport filter
+  const [selectedAmount, setSelectedAmount] = useState(5); // Selected bet amount
+  const [customAmount, setCustomAmount] = useState(''); // Custom bet amount input
+  const [selectedTeam, setSelectedTeam] = useState(null); // Selected team for betting
+  const [expandedBets, setExpandedBets] = useState({}); // Track which bet options are expanded
+
+  // UI state
+  const [error, setError] = useState(null); // Error messages
+  const [isLoading, setIsLoading] = useState(false); // Loading state
+  const [showLeaderboard, setShowLeaderboard] = useState(false); // Toggle leaderboard view
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1); // Current page for odds
+  const [pagination, setPagination] = useState(null); // Pagination metadata
+
+  // Refresh triggers
+  const [betsRefreshTrigger, setBetsRefreshTrigger] = useState(0); // Force betting history refresh
+
+  // Constants
   const SPORTS = [
     { value: 'all', label: 'All Sports' },
     { value: 'NFL', label: 'NFL' },
@@ -172,10 +181,13 @@ function App() {
     setUser(null);
     setOdds([]);
     setError(null);
+    setShowLeaderboard(false); // Reset view on logout
   };
 
+  /**
+   * Handles bet cancellation and refreshes user data
+   */
   const handleBetCancelled = async () => {
-    // Refresh user data to update balance
     try {
       const response = await fetch('http://localhost:5000/user', {
         headers: {
@@ -201,190 +213,30 @@ function App() {
     }
   };
 
-  // Render authentication forms if no user is logged in
-  if (!user) {
-    return (
-      <div className="app">
-        {!user ? (
-          <div className="auth-container">
-            {showRegister ? (
-              <>
-                <Register onRegisterSuccess={handleRegisterSuccess} />
-                <button onClick={() => setShowRegister(false)}>
-                  Already have an account? Login
-                </button>
-              </>
-            ) : (
-              <>
-                <Login onLogin={handleLoginSuccess} />
-                <button onClick={() => setShowRegister(true)}>
-                  Need an account? Register
-                </button>
-              </>
-            )}
-          </div>
-        ) : (
-          <>
-            <div className="user-info">
-              <span>Welcome, {user.username}!</span>
-              <span>Balance: ${user.balance}</span>
-              <button onClick={handleLogout}>Logout</button>
-              <button onClick={() => setShowLeaderboard(!showLeaderboard)}>
-                {showLeaderboard ? 'Show Games' : 'Show Leaderboard'}
-              </button>
-            </div>
-
-            {showLeaderboard ? (
-              <Leaderboard />
-            ) : (
-              <>
-                <div className="controls">
-                  <div className="sport-selector">
-                    <label>Select Sport:</label>
-                    <select 
-                      value={selectedSport} 
-                      onChange={(e) => setSelectedSport(e.target.value)}
-                    >
-                      {SPORTS.map(sport => (
-                        <option key={sport.value} value={sport.value}>
-                          {sport.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="games-container">
-                  {isLoading ? (
-                    <div className="loading">Loading games...</div>
-                  ) : error ? (
-                    <div className="error">{error}</div>
-                  ) : odds.length === 0 ? (
-                    <div className="no-games">No games available for the selected sport.</div>
-                  ) : (
-                    odds.map((game) => (
-                      <div key={game.id} className="game-card">
-                        <div className="game-header">
-                          <span className="sport-tag">{game.sport}</span>
-                          <span className="game-time">
-                            {new Date(game.commenceTime).toLocaleString()} 
-                            ({new Date(game.commenceTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})
-                          </span>
-                        </div>
-                        <h3>{game.homeTeam} vs {game.awayTeam}</h3>
-                        <div className="odds-display">
-                          {game.odds && game.odds.length > 0 && (
-                            <div className="odds-info">
-                              <p>{game.homeTeam}: {game.odds[0]?.price > 0 ? '+' : ''}{game.odds[0]?.price}</p>
-                              <p>{game.awayTeam}: {game.odds[1]?.price > 0 ? '+' : ''}{game.odds[1]?.price}</p>
-                            </div>
-                          )}
-                          <button 
-                            className="bet-button"
-                            onClick={() => setExpandedBets(prev => ({
-                              ...prev,
-                              [game.id]: !prev[game.id]
-                            }))}
-                          >
-                            {expandedBets[game.id] ? 'Cancel' : 'Place Bet'}
-                          </button>
-                          {expandedBets[game.id] && (
-                            <div className="betting-options">
-                              <div className="team-selection">
-                                <button 
-                                  className={`team-button ${selectedTeam === game.homeTeam ? 'selected' : ''}`}
-                                  onClick={() => setSelectedTeam(game.homeTeam)}
-                                >
-                                  {game.homeTeam}
-                                </button>
-                                <button 
-                                  className={`team-button ${selectedTeam === game.awayTeam ? 'selected' : ''}`}
-                                  onClick={() => setSelectedTeam(game.awayTeam)}
-                                >
-                                  {game.awayTeam}
-                                </button>
-                              </div>
-                              <div className="bet-amounts">
-                                {BET_AMOUNTS.map(amount => (
-                                  <button
-                                    key={amount}
-                                    className={selectedAmount === amount ? 'selected' : ''}
-                                    onClick={() => {
-                                      setSelectedAmount(amount);
-                                      setCustomAmount('');
-                                    }}
-                                  >
-                                    ${amount}
-                                  </button>
-                                ))}
-                                <input
-                                  type="number"
-                                  placeholder="Custom amount"
-                                  value={customAmount}
-                                  onChange={(e) => {
-                                    setCustomAmount(e.target.value);
-                                    setSelectedAmount(null);
-                                  }}
-                                  min="1"
-                                />
-                              </div>
-                              <button 
-                                className="confirm-bet-button"
-                                disabled={!selectedTeam || (!selectedAmount && !customAmount)}
-                                onClick={() => handlePlaceBet(game, customAmount || selectedAmount)}
-                              >
-                                Confirm Bet
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                {!isLoading && pagination?.hasMore && (
-                  <button onClick={handleLoadMore} className="load-more-button">
-                    Load More Games
-                  </button>
-                )}
-
-                <BettingHistory
-                  userId={user.id}
-                  refreshTrigger={betsRefreshTrigger}
-                  onBetCancelled={handleBetCancelled}
-                />
-              </>
-            )}
-          </>
-        )}
-      </div>
-    );
-  }
-
-  // Render main application interface for logged in users
+  // Main render method
   return (
     <div className="app">
       {!user ? (
-        <div className="auth-container">
+        // Authentication interface
+        <>
           {showRegister ? (
-            <>
+            <div className="auth-container">
               <Register onRegisterSuccess={handleRegisterSuccess} />
               <button onClick={() => setShowRegister(false)}>
                 Already have an account? Login
               </button>
-            </>
+            </div>
           ) : (
-            <>
-              <Login onLogin={handleLoginSuccess} />
-              <button onClick={() => setShowRegister(true)}>
-                Need an account? Register
-              </button>
-            </>
+            <Login 
+              onLogin={handleLoginSuccess} 
+              onShowRegister={() => setShowRegister(true)}
+            />
           )}
-        </div>
+        </>
       ) : (
-        <>
+        // Main application interface
+        <div className="app-container">
+          {/* User info bar */}
           <div className="user-info">
             <span>Welcome, {user.username}!</span>
             <span>Balance: ${user.balance}</span>
@@ -398,6 +250,7 @@ function App() {
             <Leaderboard />
           ) : (
             <>
+              {/* Sports filter controls */}
               <div className="controls">
                 <div className="sport-selector">
                   <label>Select Sport:</label>
@@ -414,6 +267,7 @@ function App() {
                 </div>
               </div>
 
+              {/* Games listing */}
               <div className="games-container">
                 {isLoading ? (
                   <div className="loading">Loading games...</div>
@@ -503,12 +357,14 @@ function App() {
                 )}
               </div>
 
+              {/* Load more button */}
               {!isLoading && pagination?.hasMore && (
                 <button onClick={handleLoadMore} className="load-more-button">
                   Load More Games
                 </button>
               )}
 
+              {/* Betting history */}
               <BettingHistory
                 userId={user.id}
                 refreshTrigger={betsRefreshTrigger}
@@ -516,7 +372,7 @@ function App() {
               />
             </>
           )}
-        </>
+        </div>
       )}
     </div>
   );

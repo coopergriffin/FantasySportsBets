@@ -120,4 +120,36 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - The Odds API for providing sports data
 - React team for the amazing frontend library
-- Express.js team for the robust backend framework 
+- Express.js team for the robust backend framework
+
+## 🔧 Configuration
+
+### Adjusting Game Limits
+
+The app is configured to show only **5 games per sport** by default to conserve API calls. To increase this:
+
+1. **Open `server.js`**
+2. **Find the `SPORT_CONFIG` section** (around line 20-50)
+3. **Change the `maxGamesPerSport` value**:
+   ```javascript
+   const SPORT_CONFIG = {
+       maxGamesPerSport: 25,  // 🔧 Changed from 5 to 25
+       // ... rest of config
+   };
+   ```
+4. **Restart the server** - changes take effect immediately
+
+#### Individual Sport Limits
+You can also set different limits per sport:
+```javascript
+sports: {
+    'NFL': { maxGames: 10 },  // 10 NFL games
+    'NBA': { maxGames: 20 },  // 20 NBA games
+    // ... etc
+}
+```
+
+#### Cache Settings
+- **Cache Duration**: Currently 60 minutes between API refreshes
+- **To refresh more often**: Decrease `cacheRefreshMinutes`
+- **To use less API calls**: Increase `cacheRefreshMinutes` 
