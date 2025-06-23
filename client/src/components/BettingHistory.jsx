@@ -1,18 +1,18 @@
 /**
  * BettingHistory Component
  * 
- * Displays a user's betting history with the ability to cancel pending bets.
- * Automatically refreshes when new bets are placed or cancelled.
+ * Displays a user's betting history with the ability to sell pending bets.
+ * Automatically refreshes when new bets are placed or sold.
  * 
  * @param {number} userId - The ID of the user whose bets to display
  * @param {number} refreshTrigger - Counter that triggers data refresh when incremented
- * @param {Function} onBetCancelled - Callback function called when a bet is cancelled
+ * @param {Function} onBetSold - Callback function called when a bet is sold
  */
 
 import { useState, useEffect } from 'react';
 import './BettingHistory.css';
 
-function BettingHistory({ userId, refreshTrigger, onBetCancelled }) {
+function BettingHistory({ userId, refreshTrigger, onBetSold }) {
   // Component state
   const [bets, setBets] = useState([]); // Array of user's betting history
   const [loading, setLoading] = useState(true); // Loading state indicator
@@ -69,17 +69,17 @@ function BettingHistory({ userId, refreshTrigger, onBetCancelled }) {
   }, [userId, refreshTrigger]); // Dependencies: re-run when userId or refreshTrigger changes
 
   /**
-   * Handles bet cancellation
-   * Calls backend API to cancel bet and triggers parent component refresh
+   * Handles bet sale
+   * Calls backend API to sell bet and triggers parent component refresh
    * 
-   * @param {number} betId - The ID of the bet to cancel
+   * @param {number} betId - The ID of the bet to sell
    */
-  const handleCancelBet = async (betId) => {
+  const handleSellBet = async (betId) => {
     try {
       const token = localStorage.getItem('token');
       
-      // Call backend API to cancel the bet
-      const response = await fetch(`http://localhost:5000/bets/${betId}/cancel`, {
+      // Call backend API to sell the bet
+      const response = await fetch(`http://localhost:5000/sell-bet/${betId}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -90,25 +90,46 @@ function BettingHistory({ userId, refreshTrigger, onBetCancelled }) {
       // Handle API errors
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to cancel bet');
+        throw new Error(errorData.error || 'Failed to sell bet');
       }
 
-      // Notify parent component of successful cancellation
-      onBetCancelled();
+      const result = await response.json();
+      
+      // Show detailed success message with profit/loss information
+      let message = `Bet sold successfully!\n`;
+      message += `Original Amount: $${result.originalAmount}\n`;
+      message += `Sale Value: $${result.sellValue}\n`;
+      
+      if (result.profitLoss > 0) {
+        message += `Profit: +$${result.profitLoss.toFixed(2)} 📈\n`;
+      } else if (result.profitLoss < 0) {
+        message += `Loss: $${result.profitLoss.toFixed(2)} 📉\n`;
+      } else {
+        message += `No change in value\n`;
+      }
+      
+      if (result.currentOdds && result.originalOdds !== result.currentOdds) {
+        message += `Odds: ${result.originalOdds} → ${result.currentOdds}`;
+      }
+      
+      alert(message);
+      
+      // Notify parent component of successful sale
+      onBetSold();
     } catch (error) {
-      console.error('Error cancelling bet:', error);
+      console.error('Error selling bet:', error);
       alert(error.message);
     }
   };
 
   /**
-   * Determines if a bet can be cancelled based on game date
-   * Bets can only be cancelled before the game starts
+   * Determines if a bet can be sold based on game date
+   * Bets can only be sold before the game starts
    * 
    * @param {string} gameDate - ISO date string of the game
-   * @returns {boolean} True if bet can be cancelled, false otherwise
+   * @returns {boolean} True if bet can be sold, false otherwise
    */
-  const canCancelBet = (gameDate) => {
+  const canSellBet = (gameDate) => {
     return new Date(gameDate) > new Date();
   };
 
@@ -132,22 +153,53 @@ function BettingHistory({ userId, refreshTrigger, onBetCancelled }) {
     <div className="betting-history">
       <h2>Betting History</h2>
       <div className="bets-list">
-        {bets.map((bet) => (
-          <div key={bet.id} className={`bet-item ${bet.outcome}`}>
-            {/* Bet information display */}
-            <div className="bet-details">
-              <span className="game">{bet.game}</span>
-              <span className="amount">${bet.amount}</span>
-              <span className="odds">{bet.odds > 0 ? '+' : ''}{bet.odds}</span>
-              <span className="outcome">{bet.outcome}</span>
+        {bets.map((bet) => {
+          const betStatus = bet.status || bet.outcome || 'pending';
+          const isPending = betStatus === 'pending';
+          const canSell = isPending && bet.game_date && canSellBet(bet.game_date);
+          
+          return (
+            <div key={bet.id} className={`bet-item ${betStatus}`}>
+              {/* Bet information display */}
+              <div className="bet-details">
+                <div className="bet-game">{bet.game}</div>
+                <div className="bet-info">
+                  <span className="bet-amount">${bet.amount}</span>
+                  <span className="bet-odds">{bet.odds > 0 ? '+' : ''}{bet.odds}</span>
+                  <span className={`bet-status status-${betStatus}`}>
+                    {betStatus.charAt(0).toUpperCase() + betStatus.slice(1)}
+                  </span>
+                  {bet.team && (
+                    <span className="bet-team">Team: {bet.team}</span>
+                  )}
+                  {bet.game_date && (
+                    <span className="bet-date">
+                      Game: {new Date(bet.game_date).toLocaleDateString()} at {new Date(bet.game_date).toLocaleTimeString()}
+                    </span>
+                  )}
+                  <span className="bet-created">
+                    Placed: {new Date(bet.created_at).toLocaleDateString()} at {new Date(bet.created_at).toLocaleTimeString()}
+                  </span>
+                </div>
+              </div>
+              
+              {/* Sell button for pending bets that haven't started */}
+              {canSell && (
+                <button 
+                  className="sell-bet-button"
+                  onClick={() => handleSellBet(bet.id)}
+                >
+                  Sell Bet
+                </button>
+              )}
+              
+              {/* Show message if bet can't be sold because game started */}
+              {isPending && bet.game_date && !canSellBet(bet.game_date) && (
+                <span className="game-started-message">Game has started</span>
+              )}
             </div>
-            
-            {/* Cancel button for pending bets */}
-            {bet.outcome === 'pending' && (
-              <button onClick={() => handleCancelBet(bet.id)}>Cancel Bet</button>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

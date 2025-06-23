@@ -771,6 +771,7 @@ db.serialize(() => {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             game TEXT,
+            team TEXT,
             amount REAL,
             odds INTEGER,
             sport TEXT,
@@ -958,17 +959,39 @@ app.post('/login', [
 });
 
 /**
+ * Get Current User Profile Endpoint
+ * Returns current user's profile information
+ */
+app.get('/user', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    
+    db.get('SELECT id, username, email, balance, created_at FROM users WHERE id = ?', [userId], (err, user) => {
+        if (err) {
+            console.error('Database error fetching user:', err);
+            return res.status(500).json({ error: 'Failed to fetch user data' });
+        }
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        res.json(user);
+    });
+});
+
+/**
  * Place Bet Endpoint
  * Handles bet placement and balance updates
  */
 app.post('/api/bets', authenticateToken, async (req, res) => {
-    const { game, amount, odds, sport, game_date } = req.body;
+    const { game, team, amount, odds, sport, game_date } = req.body;
     const userId = req.user.userId;
 
     try {
         console.log('Attempting to place bet:', {
             userId,
             game,
+            team,
             amount,
             odds,
             sport,
@@ -993,8 +1016,8 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
 
         // Place bet and update balance
         await db.run(
-            'INSERT INTO bets (user_id, game, amount, odds, sport, game_date) VALUES (?, ?, ?, ?, ?, ?)',
-            [userId, game, amount, odds, sport, game_date]
+            'INSERT INTO bets (user_id, game, team, amount, odds, sport, game_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [userId, game, team, amount, odds, sport, game_date]
         );
 
         await db.run(
@@ -1118,16 +1141,24 @@ app.get('/bets/:userId', authenticateToken, (req, res) => {
                 return res.status(500).json({ error: "Failed to fetch betting history" });
             }
             console.log('Bets found:', rows ? rows.length : 0);
-            res.json(rows || []);
+            
+            // Ensure consistent status field (some might have 'outcome', some 'status')
+            const processedBets = rows.map(bet => ({
+                ...bet,
+                status: bet.status || bet.outcome || 'pending'
+            }));
+            
+            res.json(processedBets || []);
         }
     );
 });
 
 /**
- * Cancel Bet Endpoint
- * Allows users to cancel their bets if the game hasn't started yet
+ * Sell Bet Endpoint
+ * Allows users to sell their bets back based on current odds vs original odds
+ * Users gain or lose money based on how the odds have changed
  */
-app.post('/cancel-bet/:betId', authenticateToken, async (req, res) => {
+app.post('/sell-bet/:betId', authenticateToken, async (req, res) => {
     const betId = req.params.betId;
     const userId = req.user.userId;
 
@@ -1146,21 +1177,118 @@ app.post('/cancel-bet/:betId', authenticateToken, async (req, res) => {
                     return res.status(404).json({ error: "Bet not found" });
                 }
 
+                if (bet.status !== 'pending') {
+                    return res.status(400).json({ error: "Can only sell pending bets" });
+                }
+
                 // Check if game has started
                 const gameDate = new Date(bet.game_date);
                 if (gameDate < new Date()) {
-                    return res.status(400).json({ error: "Cannot cancel bet after game has started" });
+                    return res.status(400).json({ error: "Cannot sell bet after game has started" });
                 }
 
-                // Start a transaction to update user balance and delete bet
+                // Find current odds for the same game and team
+                let currentOdds = null;
+                try {
+                    const oddsResult = await new Promise((resolve, reject) => {
+                        // Try to match by exact game name first
+                        db.get(
+                            "SELECT odds, home_team, away_team FROM odds_cache WHERE game = ? ORDER BY created_at DESC LIMIT 1",
+                            [bet.game],
+                            (err, row) => {
+                                if (err) reject(err);
+                                else resolve(row);
+                            }
+                        );
+                    });
+
+                    if (oddsResult && oddsResult.odds) {
+                        const oddsData = JSON.parse(oddsResult.odds);
+                        
+                        // Try to match by team name
+                        if (bet.team && typeof bet.team === 'string') {
+                            currentOdds = oddsData.find(odd => 
+                                odd.name === bet.team || 
+                                (bet.team && bet.team.includes(odd.name)) || 
+                                (odd.name && odd.name.includes(bet.team))
+                            );
+                        }
+                        
+                        // Fallback: match by closest odds value
+                        if (!currentOdds) {
+                            currentOdds = oddsData.find(odd => Math.abs(odd.price - bet.odds) < 50) || oddsData[0];
+                        }
+                        
+                        if (currentOdds) {
+                            currentOdds = currentOdds.price;
+                        }
+                    }
+                } catch (oddsError) {
+                    console.log('Could not fetch current odds, using original odds:', oddsError.message);
+                }
+
+                // Calculate sell back value based on odds change
+                let sellValue = bet.amount; // Default to original amount if no current odds
+                let profitLoss = 0;
+                let oddsChange = "No odds change detected";
+
+                console.log(`Sell bet analysis for bet ${betId}:`);
+                console.log(`Bet team: ${bet.team || 'Not specified'}`);
+                console.log(`Original odds: ${bet.odds}, Current odds: ${currentOdds}`);
+
+                if (currentOdds !== null && currentOdds !== bet.odds) {
+                    // Calculate the value change based on odds movement
+                    // Better odds for bettor = higher payout potential = bet worth more
+                    // Worse odds for bettor = lower payout potential = bet worth less
+                    
+                    const originalImpliedProb = bet.odds > 0 ? 100 / (bet.odds + 100) : Math.abs(bet.odds) / (Math.abs(bet.odds) + 100);
+                    const currentImpliedProb = currentOdds > 0 ? 100 / (currentOdds + 100) : Math.abs(currentOdds) / (Math.abs(currentOdds) + 100);
+                    
+                    console.log(`Original implied probability: ${originalImpliedProb.toFixed(3)}`);
+                    console.log(`Current implied probability: ${currentImpliedProb.toFixed(3)}`);
+                    
+                    // If current implied probability is LOWER, odds got BETTER (more favorable)
+                    const probChange = originalImpliedProb - currentImpliedProb;
+                    
+                    // Calculate profit/loss based on how much the odds moved
+                    // Amplify the change for noticeable effect but keep it reasonable
+                    profitLoss = bet.amount * probChange * 3; 
+                    
+                    // Cap the profit/loss to reasonable bounds (max ±40% of bet amount)
+                    profitLoss = Math.max(-bet.amount * 0.4, Math.min(bet.amount * 0.4, profitLoss));
+                    sellValue = bet.amount + profitLoss;
+                    
+                    // Determine odds direction
+                    if (bet.odds > 0 && currentOdds > 0) {
+                        // Both positive: higher number = worse odds
+                        oddsChange = currentOdds > bet.odds ? "Odds worsened (less favorable)" : "Odds improved (more favorable)";
+                    } else if (bet.odds < 0 && currentOdds < 0) {
+                        // Both negative: more negative = better odds
+                        oddsChange = currentOdds < bet.odds ? "Odds improved (more favorable)" : "Odds worsened (less favorable)";
+                    } else {
+                        // Mixed signs
+                        oddsChange = profitLoss > 0 ? "Odds improved" : "Odds worsened";
+                    }
+                    
+                    console.log(`Calculated profit/loss: ${profitLoss.toFixed(2)}`);
+                    console.log(`Sell value: ${sellValue.toFixed(2)}`);
+                } else if (currentOdds === null) {
+                    oddsChange = "Current odds unavailable - selling at original value";
+                }
+
+                // Round to 2 decimal places
+                sellValue = Math.round(sellValue * 100) / 100;
+                profitLoss = Math.round(profitLoss * 100) / 100;
+
+                // Start a transaction to update user balance and update bet status
                 db.run("BEGIN TRANSACTION");
 
                 try {
-                    // Refund the bet amount to user's balance
+                    // Update user's balance with sell value
                     await new Promise((resolve, reject) => {
                         db.run(
                             "UPDATE users SET balance = balance + ? WHERE id = ?",
-                            [bet.amount, userId],
+                            [sellValue, userId],
                             (err) => {
                                 if (err) reject(err);
                                 resolve();
@@ -1168,10 +1296,10 @@ app.post('/cancel-bet/:betId', authenticateToken, async (req, res) => {
                         );
                     });
 
-                    // Delete the bet
+                    // Mark bet as sold (update status only)
                     await new Promise((resolve, reject) => {
                         db.run(
-                            "DELETE FROM bets WHERE id = ? AND user_id = ?",
+                            "UPDATE bets SET status = 'sold' WHERE id = ? AND user_id = ?",
                             [betId, userId],
                             (err) => {
                                 if (err) reject(err);
@@ -1182,17 +1310,27 @@ app.post('/cancel-bet/:betId', authenticateToken, async (req, res) => {
 
                     // Commit the transaction
                     db.run("COMMIT");
-                    res.json({ message: "Bet cancelled successfully" });
+                    
+                    res.json({ 
+                        success: true,
+                        message: "Bet sold successfully",
+                        sellValue: sellValue,
+                        originalAmount: bet.amount,
+                        profitLoss: profitLoss,
+                        originalOdds: bet.odds,
+                        currentOdds: currentOdds,
+                        oddsChange: oddsChange
+                    });
                 } catch (error) {
                     // Rollback on error
                     db.run("ROLLBACK");
                     console.error('Transaction error:', error);
-                    res.status(500).json({ error: "Failed to cancel bet" });
+                    res.status(500).json({ error: "Failed to sell bet" });
                 }
             }
         );
     } catch (error) {
-        console.error('Error cancelling bet:', error);
+        console.error('Error selling bet:', error);
         res.status(500).json({ error: "Server error" });
     }
 });

@@ -132,8 +132,10 @@ function App() {
    * Updates user balance on successful bet
    * @param {Object} game - The game data to bet on
    * @param {number} amount - The bet amount
+   * @param {string} selectedTeam - The team the user is betting on
+   * @param {number} selectedOdds - The odds for the selected team
    */
-  const handlePlaceBet = async (game, amount) => {
+  const handlePlaceBet = async (game, amount, selectedTeam, selectedOdds) => {
     if (!user) {
       alert("Please log in to place bets");
       return;
@@ -147,8 +149,9 @@ function App() {
     try {
       const response = await placeBetApi({
         game: `${game.homeTeam} vs ${game.awayTeam}`,
+        team: selectedTeam,
         amount: amount,
-        odds: game.odds[0]?.price || 0,
+        odds: selectedOdds,
         sport: game.sport,
         game_date: game.commenceTime
       });
@@ -163,6 +166,10 @@ function App() {
           ...prev,
           [game.id]: false
         }));
+        // Reset selections
+        setSelectedTeam(null);
+        setSelectedAmount(null);
+        setCustomAmount('');
         // Trigger betting history refresh
         setBetsRefreshTrigger(prev => prev + 1);
         alert("Bet placed successfully!");
@@ -185,9 +192,9 @@ function App() {
   };
 
   /**
-   * Handles bet cancellation and refreshes user data
+   * Handles bet sale and refreshes user data
    */
-  const handleBetCancelled = async () => {
+  const handleBetSold = async () => {
     try {
       const response = await fetch('http://localhost:5000/user', {
         headers: {
@@ -345,7 +352,10 @@ function App() {
                             <button 
                               className="confirm-bet-button"
                               disabled={!selectedTeam || (!selectedAmount && !customAmount)}
-                              onClick={() => handlePlaceBet(game, customAmount || selectedAmount)}
+                              onClick={() => {
+                                const selectedOdds = selectedTeam === game.homeTeam ? game.odds[0]?.price : game.odds[1]?.price;
+                                handlePlaceBet(game, customAmount || selectedAmount, selectedTeam, selectedOdds);
+                              }}
                             >
                               Confirm Bet
                             </button>
@@ -368,7 +378,7 @@ function App() {
               <BettingHistory
                 userId={user.id}
                 refreshTrigger={betsRefreshTrigger}
-                onBetCancelled={handleBetCancelled}
+                onBetSold={handleBetSold}
               />
             </>
           )}
