@@ -180,6 +180,11 @@ function BettingHistory({ userId, refreshTrigger, onBetSold }) {
                   <span className="bet-created">
                     Placed: {new Date(bet.created_at).toLocaleDateString()} at {new Date(bet.created_at).toLocaleTimeString()}
                   </span>
+                  {bet.status_changed_at && !isPending && (
+                    <span className="bet-status-changed">
+                      {betStatus.charAt(0).toUpperCase() + betStatus.slice(1)}: {new Date(bet.status_changed_at).toLocaleDateString()} at {new Date(bet.status_changed_at).toLocaleTimeString()}
+                    </span>
+                  )}
                 </div>
               </div>
               

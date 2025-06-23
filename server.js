@@ -67,6 +67,11 @@ const getMaxGames = (sportKey) => {
     return SPORT_CONFIG.sports[sportKey]?.maxGames || SPORT_CONFIG.maxGamesPerSport;
 };
 
+// Helper function to round monetary values to 2 decimal places
+const roundToTwoDecimals = (amount) => {
+    return Math.round((amount + Number.EPSILON) * 100) / 100;
+};
+
 // ============================================================================
 // DATABASE AND CACHE SETUP
 // ============================================================================
@@ -320,15 +325,12 @@ const generateAccessToken = (user) => {
 const fetchOddsForSport = async (sportKey, sportDisplay) => {
     try {
         const maxGames = getMaxGames(sportKey);
-        console.log(`Fetching odds for ${sportDisplay} (max ${maxGames} upcoming games)`);
+        console.log(`Fetching odds for ${sportDisplay} (max ${maxGames} upcoming games, no time limit)`);
         
-        // Calculate date range - only get games for the next 2 weeks to stay focused
+        // No time constraints - fetch all upcoming games and let API return what's available
         const now = new Date();
-        const maxDate = new Date(now.getTime() + (14 * 24 * 60 * 60 * 1000)); // 2 weeks from now
-        
-        // Format dates properly for the API (remove milliseconds)
         const commenceTimeFrom = now.toISOString().split('.')[0] + 'Z';
-        const commenceTimeTo = maxDate.toISOString().split('.')[0] + 'Z';
+        // Remove commenceTimeTo to get all future games
         
         // Use the fallback system to try multiple API keys
         const apiKeys = config.server.odds.apiKeys;
@@ -342,7 +344,7 @@ const fetchOddsForSport = async (sportKey, sportDisplay) => {
             if (!apiKey) continue;
 
             try {
-                const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${apiKey}&regions=us&markets=h2h&oddsFormat=american&commenceTimeFrom=${commenceTimeFrom}&commenceTimeTo=${commenceTimeTo}`;
+                const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${apiKey}&regions=us&markets=h2h&oddsFormat=american&commenceTimeFrom=${commenceTimeFrom}`;
                 console.log(`🔄 Trying API key ${i + 1}/${apiKeys.length} for ${sportDisplay}`);
                 
                 const response = await fetch(url);
@@ -365,7 +367,12 @@ const fetchOddsForSport = async (sportKey, sportDisplay) => {
             console.error(`🚫 All ${apiKeys.length} API keys failed for ${sportDisplay}`);
             throw lastError || new Error(`All API keys exhausted for ${sportDisplay}`);
         }
-        console.log(`Received ${data.length} upcoming games for ${sportDisplay} (next 2 weeks)`);
+        // Provide clear feedback about what we found
+        if (data.length === 0) {
+            console.log(`📭 No upcoming games found for ${sportDisplay} - no games currently scheduled`);
+        } else {
+            console.log(`📥 Received ${data.length} upcoming games for ${sportDisplay} (no time limit)`);
+        }
 
         // Clear old data for this sport before inserting new data
         await new Promise((resolve, reject) => {
@@ -778,9 +785,19 @@ db.serialize(() => {
             status TEXT DEFAULT 'pending',
             game_date TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            status_changed_at DATETIME DEFAULT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     `);
+
+    // Add status_changed_at column to existing bets table if it doesn't exist
+    db.run(`
+        ALTER TABLE bets ADD COLUMN status_changed_at DATETIME DEFAULT NULL
+    `, (err) => {
+        if (err && !err.message.includes('duplicate column name')) {
+            console.error('Error adding status_changed_at column:', err);
+        }
+    });
 
     // Create odds cache table with unique constraint to prevent duplicates
     db.run(`
@@ -942,7 +959,7 @@ app.post('/login', [
                 id: user.id,
                 username: user.username,
                 email: user.email,
-                balance: user.balance,
+                balance: roundToTwoDecimals(user.balance),
                 created_at: user.created_at
             };
 
@@ -974,6 +991,9 @@ app.get('/user', authenticateToken, (req, res) => {
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
+        
+        // Round balance to 2 decimal places for display
+        user.balance = roundToTwoDecimals(user.balance);
         
         res.json(user);
     });
@@ -1014,15 +1034,18 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
             return res.status(400).json({ message: 'Insufficient balance' });
         }
 
+        // Round amount to 2 decimal places
+        const roundedAmount = roundToTwoDecimals(amount);
+
         // Place bet and update balance
         await db.run(
             'INSERT INTO bets (user_id, game, team, amount, odds, sport, game_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [userId, game, team, amount, odds, sport, game_date]
+            [userId, game, team, roundedAmount, odds, sport, game_date]
         );
 
         await db.run(
-            'UPDATE users SET balance = balance - ? WHERE id = ?',
-            [amount, userId]
+            'UPDATE users SET balance = ROUND(balance - ?, 2) WHERE id = ?',
+            [roundedAmount, userId]
         );
 
         // Commit transaction
@@ -1039,7 +1062,7 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
         res.json({
             success: true,
             message: 'Bet placed successfully',
-            newBalance: updatedUser.balance
+            newBalance: roundToTwoDecimals(updatedUser.balance)
         });
     } catch (error) {
         console.error('Error placing bet:', error);
@@ -1077,18 +1100,19 @@ app.post('/resolveBet', authenticateToken, [
             db.run("BEGIN TRANSACTION");
 
             try {
-                // Update bet status
+                // Update bet status with timestamp
                 db.run(
-                    "UPDATE bets SET status = ? WHERE id = ?",
+                    "UPDATE bets SET status = ?, status_changed_at = CURRENT_TIMESTAMP WHERE id = ?",
                     [outcome, betId]
                 );
 
                 // If bet is won, update user balance
                 if (outcome === 'won') {
-                    const winnings = Math.floor(bet.amount * (bet.odds > 0 ? (bet.odds / 100) : (-100 / bet.odds)));
+                    const winnings = bet.odds > 0 ? (bet.amount * bet.odds / 100) : (bet.amount * 100 / Math.abs(bet.odds));
+                    const totalPayout = roundToTwoDecimals(bet.amount + winnings);
                     db.run(
-                        "UPDATE users SET balance = balance + ? WHERE id = ?",
-                        [bet.amount + winnings, bet.user_id]
+                        "UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id = ?",
+                        [totalPayout, bet.user_id]
                     );
                 }
 
@@ -1276,9 +1300,9 @@ app.post('/sell-bet/:betId', authenticateToken, async (req, res) => {
                     oddsChange = "Current odds unavailable - selling at original value";
                 }
 
-                // Round to 2 decimal places
-                sellValue = Math.round(sellValue * 100) / 100;
-                profitLoss = Math.round(profitLoss * 100) / 100;
+                // Round to 2 decimal places using helper function
+                sellValue = roundToTwoDecimals(sellValue);
+                profitLoss = roundToTwoDecimals(profitLoss);
 
                 // Start a transaction to update user balance and update bet status
                 db.run("BEGIN TRANSACTION");
@@ -1287,7 +1311,7 @@ app.post('/sell-bet/:betId', authenticateToken, async (req, res) => {
                     // Update user's balance with sell value
                     await new Promise((resolve, reject) => {
                         db.run(
-                            "UPDATE users SET balance = balance + ? WHERE id = ?",
+                            "UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id = ?",
                             [sellValue, userId],
                             (err) => {
                                 if (err) reject(err);
@@ -1296,10 +1320,10 @@ app.post('/sell-bet/:betId', authenticateToken, async (req, res) => {
                         );
                     });
 
-                    // Mark bet as sold (update status only)
+                    // Mark bet as sold with timestamp
                     await new Promise((resolve, reject) => {
                         db.run(
-                            "UPDATE bets SET status = 'sold' WHERE id = ? AND user_id = ?",
+                            "UPDATE bets SET status = 'sold', status_changed_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
                             [betId, userId],
                             (err) => {
                                 if (err) reject(err);

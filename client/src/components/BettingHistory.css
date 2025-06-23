@@ -104,6 +104,16 @@
   font-style: italic;
 }
 
+.bet-status-changed {
+  color: #90a4ae;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.2rem 0.4rem;
+  background-color: rgba(144, 164, 174, 0.1);
+  border-radius: 3px;
+  border: 1px solid rgba(144, 164, 174, 0.2);
+}
+
 .bet-team {
   color: #81c784;
   font-size: 0.85rem;
