@@ -1,0 +1,103 @@
+.betting-history {
+  max-width: 800px;
+  margin: 2rem auto;
+  padding: 1rem;
+  background-color: #1a1a1a;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.betting-history h2 {
+  text-align: center;
+  margin-bottom: 2rem;
+  color: #fff;
+}
+
+.bets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.bet-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background-color: #2a2a2a;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.bet-item:hover {
+  background-color: #333;
+}
+
+.bet-details {
+  flex: 1;
+}
+
+.bet-game {
+  font-size: 1.1rem;
+  font-weight: bold;
+  margin-bottom: 0.5rem;
+  color: #fff;
+}
+
+.bet-info {
+  display: flex;
+  gap: 1rem;
+  color: #ccc;
+  font-size: 0.9rem;
+}
+
+.bet-amount {
+  color: #646cff;
+  font-weight: bold;
+}
+
+.bet-odds {
+  color: #4caf50;
+}
+
+.cancel-bet-button {
+  padding: 0.5rem 1rem;
+  background-color: #ff4444;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.cancel-bet-button:hover {
+  background-color: #cc0000;
+}
+
+.betting-history-loading,
+.betting-history-error,
+.betting-history-empty {
+  text-align: center;
+  padding: 2rem;
+  color: #fff;
+}
+
+.betting-history-error {
+  color: #ff6b6b;
+}
+
+.betting-history-empty {
+  color: #999;
+  font-style: italic;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .betting-history-list {
+    grid-template-columns: 1fr;
+  }
+  
+  .bet-card {
+    margin-bottom: 1rem;
+  }
+} 

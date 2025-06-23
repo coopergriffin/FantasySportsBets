@@ -1,0 +1,68 @@
+.leaderboard-container {
+    max-width: 800px;
+    margin: 2rem auto;
+    padding: 1rem;
+    background-color: #1a1a1a;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.leaderboard-container h2 {
+    text-align: center;
+    margin-bottom: 2rem;
+    color: #fff;
+}
+
+.leaderboard-table {
+    width: 100%;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.leaderboard-header {
+    display: grid;
+    grid-template-columns: 80px 1fr 120px;
+    background-color: #2a2a2a;
+    padding: 1rem;
+    font-weight: bold;
+    color: #fff;
+}
+
+.leaderboard-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 120px;
+    padding: 1rem;
+    border-bottom: 1px solid #333;
+    transition: background-color 0.2s;
+}
+
+.leaderboard-row:hover {
+    background-color: #2a2a2a;
+}
+
+.leaderboard-row:last-child {
+    border-bottom: none;
+}
+
+.rank {
+    text-align: center;
+}
+
+.username {
+    text-align: left;
+}
+
+.balance {
+    text-align: right;
+}
+
+.leaderboard-loading,
+.leaderboard-error {
+    text-align: center;
+    padding: 2rem;
+    color: #fff;
+}
+
+.leaderboard-error {
+    color: #ff6b6b;
+} 
