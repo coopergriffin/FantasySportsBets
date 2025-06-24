@@ -12,6 +12,8 @@ import Login from "./components/Login";       // User login component
 import BettingPanel from "./components/BettingPanel"; // User betting panel with active bets and history
 import Leaderboard from './components/Leaderboard'; // Global leaderboard component
 import Notification from './components/Notification'; // Notification component
+import Header from './components/Header'; // Header with logo and navigation
+import MainLayout from './components/MainLayout'; // Main layout with sidebar ads
 import { fetchOdds, placeBet as placeBetApi, resolveCompletedGames, updateUserTimezone } from "./api"; // API communication functions
 import { formatTimeForDisplay } from "./utils/timeUtils"; // Time formatting utilities
 import "./App.css"; // Component styles
@@ -375,65 +377,17 @@ function App() {
       ) : (
         // Main application interface
         <div className="app-container">
-          {/* User info bar */}
-          <div className="user-info">
-            <span>Welcome, {user.username}!</span>
-            <span>Balance: ${user.balance}</span>
-            <div className="timezone-selector">
-              <label htmlFor="timezone">Timezone: </label>
-              <select 
-                id="timezone" 
-                value={user.timezone || 'America/Toronto'} 
-                onChange={(e) => handleTimezoneChange(e.target.value)}
-              >
-                {/* Canadian Timezones - Ordered by UTC offset */}
-                <optgroup label="🇨🇦 Canada">
-                  <option value="America/St_Johns">St. John's - UTC-3:30</option>
-                  <option value="America/Halifax">Halifax - UTC-4</option>
-                  <option value="America/Toronto">Toronto - UTC-5</option>
-                  <option value="America/Winnipeg">Winnipeg - UTC-6</option>
-                  <option value="America/Edmonton">Edmonton - UTC-7</option>
-                  <option value="America/Vancouver">Vancouver - UTC-8</option>
-                </optgroup>
-                
-                {/* US Major Cities - Ordered by UTC offset */}
-                <optgroup label="🇺🇸 United States">
-                  <option value="Pacific/Honolulu">Honolulu - UTC-10</option>
-                  <option value="America/Anchorage">Anchorage - UTC-9</option>
-                  <option value="America/Los_Angeles">Los Angeles - UTC-8</option>
-                  <option value="America/Phoenix">Phoenix - UTC-7</option>
-                  <option value="America/Denver">Denver - UTC-7</option>
-                  <option value="America/Chicago">Chicago - UTC-6</option>
-                  <option value="America/New_York">New York - UTC-5</option>
-                </optgroup>
-                
-                {/* International Major Cities - Ordered by UTC offset */}
-                <optgroup label="🌍 International">
-                  <option value="Pacific/Auckland">Auckland - UTC+12</option>
-                  <option value="Australia/Sydney">Sydney - UTC+10</option>
-                  <option value="Asia/Tokyo">Tokyo - UTC+9</option>
-                  <option value="Asia/Shanghai">Shanghai - UTC+8</option>
-                  <option value="Asia/Bangkok">Bangkok - UTC+7</option>
-                  <option value="Asia/Dhaka">Dhaka - UTC+6</option>
-                  <option value="Asia/Kolkata">Mumbai - UTC+5:30</option>
-                  <option value="Asia/Karachi">Karachi - UTC+5</option>
-                  <option value="Asia/Dubai">Dubai - UTC+4</option>
-                  <option value="Europe/Moscow">Moscow - UTC+3</option>
-                  <option value="Africa/Cairo">Cairo - UTC+2</option>
-                  <option value="Europe/Paris">Paris - UTC+1</option>
-                  <option value="Europe/London">London - UTC+0</option>
-                  <option value="UTC">UTC (Universal Time)</option>
-                  <option value="Atlantic/Azores">Azores - UTC-1</option>
-                  <option value="America/Sao_Paulo">São Paulo - UTC-3</option>
-                  <option value="America/Argentina/Buenos_Aires">Buenos Aires - UTC-3</option>
-                </optgroup>
-              </select>
-            </div>
-            <button onClick={handleLogout}>Logout</button>
-            <button onClick={() => setShowLeaderboard(!showLeaderboard)}>
-              {showLeaderboard ? 'Show Games' : 'Show Leaderboard'}
-            </button>
-          </div>
+          {/* Header with logo and navigation */}
+          <Header 
+            user={user}
+            onLogout={handleLogout}
+            showLeaderboard={showLeaderboard}
+            setShowLeaderboard={setShowLeaderboard}
+            onTimezoneChange={handleTimezoneChange}
+          />
+
+          {/* Main layout with sidebar ads */}
+          <MainLayout>
 
           {showLeaderboard ? (
             <Leaderboard />
@@ -612,6 +566,7 @@ function App() {
               />
             </>
           )}
+          </MainLayout>
         </div>
       )}
 

@@ -96,4 +96,90 @@ const config = {
   }
 };
 
-module.exports = config; 
+/**
+ * Advertisement Configuration
+ * Controls ad display and platform integration
+ */
+const ADS_CONFIG = {
+    // Global ad toggle - set to false to disable all ads
+    enabled: true,
+    
+    // Development mode - shows fake ads instead of real ones
+    developmentMode: true,
+    
+    // Ad platform configuration (for future real ad integration)
+    platforms: {
+        google: {
+            enabled: false,
+            publisherId: '', // Will be set when going live
+            adUnitIds: {
+                banner: '',
+                sidebar: '',
+                interstitial: ''
+            }
+        },
+        facebook: {
+            enabled: false,
+            placementId: ''
+        }
+    },
+    
+    // Ad placement configuration
+    placements: {
+        header: {
+            enabled: true,
+            type: 'banner',
+            size: '728x90'
+        },
+        sidebar: {
+            enabled: true,
+            type: 'rectangle',
+            size: '300x250'
+        },
+        betweenGames: {
+            enabled: false, // Disabled for better UX
+            type: 'banner',
+            size: '728x90'
+        }
+    },
+    
+    // Fake ad content for development/demo
+    fakeAds: {
+        sportsbook: [
+            {
+                title: "BetMGM Sportsbook",
+                text: "Get $1000 Risk-Free First Bet",
+                image: "https://via.placeholder.com/300x250/1a472a/ffffff?text=BetMGM",
+                cta: "Claim Offer"
+            },
+            {
+                title: "DraftKings",
+                text: "Bet $5, Get $200 in Bonus Bets",
+                image: "https://via.placeholder.com/300x250/f97316/ffffff?text=DraftKings",
+                cta: "Sign Up Now"
+            },
+            {
+                title: "FanDuel Sportsbook",
+                text: "No Sweat First Bet up to $1000",
+                image: "https://via.placeholder.com/300x250/3b82f6/ffffff?text=FanDuel",
+                cta: "Get Started"
+            }
+        ],
+        banner: [
+            {
+                title: "ESPN+ Sports Coverage",
+                text: "Stream Live Sports & Exclusive Content",
+                image: "https://via.placeholder.com/728x90/dc2626/ffffff?text=ESPN%2B",
+                cta: "Subscribe"
+            },
+            {
+                title: "Sports Analytics Pro",
+                text: "Advanced Stats & Betting Insights",
+                image: "https://via.placeholder.com/728x90/7c3aed/ffffff?text=Analytics+Pro",
+                cta: "Try Free"
+            }
+        ]
+    }
+};
+
+module.exports = { ...config, ads: ADS_CONFIG }; 

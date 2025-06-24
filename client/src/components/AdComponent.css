@@ -1,0 +1,226 @@
+/**
+ * AdComponent Styles
+ * Responsive ad styling for different placements
+ */
+
+.ad-component {
+  position: relative;
+  margin: 1rem 0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: all 0.3s ease;
+  background: linear-gradient(135deg, #1a1a1a, #2a2a2a);
+  border: 1px solid #333;
+}
+
+.ad-component:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Demo label for development mode */
+.ad-demo-label {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: #646cff;
+  color: white;
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  z-index: 10;
+  font-weight: 600;
+}
+
+/* Ad content container */
+.ad-content {
+  display: flex;
+  cursor: pointer;
+  height: 100%;
+  position: relative;
+}
+
+/* Header banner layout (728x90) */
+.ad-header .ad-content {
+  flex-direction: row;
+  align-items: center;
+  padding: 0.5rem;
+}
+
+.ad-header .ad-image {
+  flex: 0 0 auto;
+  margin-right: 1rem;
+}
+
+.ad-header .ad-image img {
+  width: 80px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.ad-header .ad-text {
+  flex: 1;
+  text-align: left;
+}
+
+.ad-header .ad-title {
+  font-size: 1rem;
+  margin: 0 0 0.25rem 0;
+  color: #fff;
+}
+
+.ad-header .ad-description {
+  font-size: 0.8rem;
+  margin: 0 0 0.5rem 0;
+  color: #ccc;
+}
+
+.ad-header .ad-cta {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.8rem;
+}
+
+/* Sidebar rectangle layout (300x250) */
+.ad-sidebar .ad-content {
+  flex-direction: column;
+  text-align: center;
+  padding: 1rem;
+}
+
+.ad-sidebar .ad-image {
+  margin-bottom: 1rem;
+}
+
+.ad-sidebar .ad-image img {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.ad-sidebar .ad-title {
+  font-size: 1.1rem;
+  margin: 0 0 0.5rem 0;
+  color: #fff;
+  font-weight: 600;
+}
+
+.ad-sidebar .ad-description {
+  font-size: 0.9rem;
+  margin: 0 0 1rem 0;
+  color: #ccc;
+  line-height: 1.4;
+}
+
+.ad-sidebar .ad-cta {
+  font-size: 0.9rem;
+  padding: 0.6rem 1.2rem;
+}
+
+/* Between games banner (same as header) */
+.ad-betweenGames .ad-content {
+  flex-direction: row;
+  align-items: center;
+  padding: 1rem;
+}
+
+.ad-betweenGames .ad-image {
+  flex: 0 0 auto;
+  margin-right: 1rem;
+}
+
+.ad-betweenGames .ad-image img {
+  width: 100px;
+  height: 70px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.ad-betweenGames .ad-text {
+  flex: 1;
+  text-align: left;
+}
+
+.ad-betweenGames .ad-title {
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem 0;
+  color: #fff;
+}
+
+.ad-betweenGames .ad-description {
+  font-size: 1rem;
+  margin: 0 0 0.75rem 0;
+  color: #ccc;
+}
+
+.ad-betweenGames .ad-cta {
+  font-size: 1rem;
+  padding: 0.5rem 1rem;
+}
+
+/* Call-to-action button styling */
+.ad-cta {
+  background: linear-gradient(135deg, #646cff, #747bff);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ad-cta:hover {
+  background: linear-gradient(135deg, #747bff, #646cff);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(100, 108, 255, 0.4);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .ad-header .ad-content,
+  .ad-betweenGames .ad-content {
+    flex-direction: column;
+    text-align: center;
+    padding: 0.75rem;
+  }
+  
+  .ad-header .ad-image,
+  .ad-betweenGames .ad-image {
+    margin-right: 0;
+    margin-bottom: 0.5rem;
+  }
+  
+  .ad-header .ad-image img,
+  .ad-betweenGames .ad-image img {
+    width: 80px;
+    height: 60px;
+  }
+  
+  .ad-sidebar {
+    margin: 0.5rem 0;
+  }
+  
+  .ad-sidebar .ad-content {
+    padding: 0.75rem;
+  }
+}
+
+/* Loading placeholder */
+.ad-loading {
+  background: #2a2a2a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1rem;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+}
+
+/* Disabled state */
+.ad-disabled {
+  display: none;
+} 

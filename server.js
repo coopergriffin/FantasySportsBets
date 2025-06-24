@@ -695,6 +695,25 @@ db.serialize(() => {
 });
 
 /**
+ * Advertisement Configuration Endpoint
+ * Returns ad configuration for frontend
+ */
+app.get('/api/ads/config', (req, res) => {
+    try {
+        const adConfig = {
+            enabled: config.ads.enabled,
+            developmentMode: config.ads.developmentMode,
+            placements: config.ads.placements,
+            fakeAds: config.ads.developmentMode ? config.ads.fakeAds : null
+        };
+        res.json(adConfig);
+    } catch (error) {
+        console.error('Error fetching ad config:', error);
+        res.status(500).json({ error: 'Failed to fetch ad configuration' });
+    }
+});
+
+/**
  * Registration validation middleware
  * Defines rules for username, password, and email validation
  */
