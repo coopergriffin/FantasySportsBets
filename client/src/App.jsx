@@ -22,7 +22,7 @@ function App() {
 
   // Betting interface state
   const [odds, setOdds] = useState([]); // Available betting odds
-  const [selectedSport, setSelectedSport] = useState('all'); // Currently selected sport filter
+  const [selectedSport, setSelectedSport] = useState('NFL'); // Currently selected sport filter
   const [selectedAmount, setSelectedAmount] = useState(null); // Selected bet amount
   const [customAmount, setCustomAmount] = useState(''); // Custom bet amount input
   const [selectedTeam, setSelectedTeam] = useState(null); // Selected team for betting
@@ -46,7 +46,6 @@ function App() {
 
   // Constants
   const SPORTS = [
-    { value: 'all', label: 'All Sports' },
     { value: 'NFL', label: 'NFL' },
     { value: 'NBA', label: 'NBA' },
     { value: 'MLB', label: 'MLB' },

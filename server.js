@@ -16,56 +16,34 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 const helmet = require('helmet');
 const jwt = require('jsonwebtoken');
 const config = require('./config');
+const { 
+    getApiSportKey, 
+    getSupportedSports, 
+    getSportConfig, 
+    getMaxGamesForSport, 
+    normalizeTeamName, 
+    isBettingAllowed 
+} = require('./sports-config');
 
 // ============================================================================
-// SPORT CONFIGURATION - Easy to modify for different game limits
+// UNIFIED SPORTS CONFIGURATION
 // ============================================================================
 /**
- * 🔧 TO INCREASE GAMES PER SPORT:
- * 1. Change `maxGamesPerSport` below (affects all sports)
- * 2. OR change individual sport `maxGames` values
+ * Sports configuration is now centralized in sports-config.js
+ * 
+ * 🔧 TO ADD NEW SPORTS:
+ * 1. Edit sports-config.js and add the sport to SPORTS_CONFIG
+ * 2. Add API mapping in API_PROVIDERS
  * 3. Restart server - changes take effect immediately
  * 
- * CURRENT LIMITS: Only 5 games per sport (saves API calls)
- * SUGGESTED INCREASES: 10-15 for testing, 20-30 for production
- * 
- * CACHE REFRESH: Currently every 60 minutes
- * - Increase for less API usage
- * - Decrease for more current data
+ * 🔧 TO CHANGE API PROVIDER:
+ * 1. Edit sports-config.js and change CURRENT_API_PROVIDER
+ * 2. Ensure new provider has sport mappings
+ * 3. Restart server
  */
-const SPORT_CONFIG = {
-    maxGamesPerSport: 5,  // 🔧 CHANGE THIS to increase/decrease games per sport
-    cacheRefreshMinutes: 60, // How often to refresh cache (in minutes)
-    
-    // Sport-specific settings
-    sports: {
-        'NFL': { 
-            key: 'americanfootball_nfl', 
-            display: 'NFL',
-            maxGames: 5  // 🔧 Individual sport limits (optional override)
-        },
-        'NBA': { 
-            key: 'basketball_nba', 
-            display: 'NBA',
-            maxGames: 5
-        },
-        'MLB': { 
-            key: 'baseball_mlb', 
-            display: 'MLB',
-            maxGames: 5
-        },
-        'NHL': { 
-            key: 'icehockey_nhl', 
-            display: 'NHL',
-            maxGames: 5
-        }
-    }
-};
 
-// Helper function to get max games for a sport
-const getMaxGames = (sportKey) => {
-    return SPORT_CONFIG.sports[sportKey]?.maxGames || SPORT_CONFIG.maxGamesPerSport;
-};
+// Legacy cache refresh setting (now centralized in sports-config.js)
+const CACHE_REFRESH_MINUTES = 60;
 
 // Helper function to round monetary values to 2 decimal places
 const roundToTwoDecimals = (amount) => {
@@ -77,13 +55,7 @@ const roundToTwoDecimals = (amount) => {
 // ============================================================================
 
 // Cache configuration
-const CACHE_DURATION = SPORT_CONFIG.cacheRefreshMinutes * 60 * 1000; // Convert to milliseconds
-let oddsCache = {
-    data: {},  // Cache by sport
-    lastFetched: {},  // Last fetch time by sport
-    allSports: null,  // Cache for 'all' sports view
-    allSportsLastFetched: null  // Last fetch time for 'all' sports
-};
+const CACHE_DURATION = CACHE_REFRESH_MINUTES * 60 * 1000; // Convert to milliseconds
 
 // Cache table setup
 const db = new sqlite3.Database('./bets.db', (err) => {
@@ -91,79 +63,8 @@ const db = new sqlite3.Database('./bets.db', (err) => {
     else console.log('Connected to SQLite database.');
 });
 
-// Cache management functions
-const isCacheValid = async (sport = 'all') => {
-    return new Promise((resolve, reject) => {
-        db.get(
-            'SELECT last_fetched FROM odds_cache WHERE sport = ?',
-            [sport],
-            (err, row) => {
-                if (err) {
-                    console.error('Error checking cache validity:', err);
-                    resolve(false);
-                    return;
-                }
-                if (!row) {
-                    resolve(false);
-                    return;
-                }
-                const isValid = (Date.now() - row.last_fetched) < CACHE_DURATION;
-                resolve(isValid);
-            }
-        );
-    });
-};
-
-const getCachedData = async (sport = 'all') => {
-    return new Promise((resolve, reject) => {
-        db.get(
-            'SELECT data FROM odds_cache WHERE sport = ?',
-            [sport],
-            (err, row) => {
-                if (err) {
-                    console.error('Error getting cached data:', err);
-                    resolve(null);
-                    return;
-                }
-                if (!row) {
-                    resolve(null);
-                    return;
-                }
-                try {
-                    const games = JSON.parse(row.data);
-                    resolve(games);
-                } catch (e) {
-                    console.error('Error parsing cached data:', e);
-                    resolve(null);
-                }
-            }
-        );
-    });
-};
-
-const updateCache = async (games, sport = 'all') => {
-    return new Promise((resolve, reject) => {
-        const stmt = db.prepare(
-            'INSERT OR REPLACE INTO odds_cache (sport, data, last_fetched) VALUES (?, ?, ?)'
-        );
-        
-        stmt.run(
-            sport,
-            JSON.stringify(games),
-            Date.now(),
-            (err) => {
-                if (err) {
-                    console.error('Error updating cache:', err);
-                    resolve(false);
-                    return;
-                }
-                console.log(`Cache updated for ${sport} with ${games.length} games`);
-                resolve(true);
-            }
-        );
-        stmt.finalize();
-    });
-};
+// Note: Cache management is now handled directly in the database through the odds_cache table
+// The previous in-memory cache functions are no longer needed since we simplified to individual sports only
 
 
 
@@ -261,7 +162,7 @@ const generateAccessToken = (user) => {
 // Function to fetch odds for a specific sport with simplified caching
 const fetchOddsForSport = async (sportKey, sportDisplay) => {
     try {
-        const maxGames = getMaxGames(sportKey);
+        const maxGames = getMaxGamesForSport(sportKey);
         console.log(`Fetching odds for ${sportDisplay} (max ${maxGames} upcoming games, no time limit)`);
         
         // No time constraints - fetch all upcoming games and let API return what's available
@@ -281,7 +182,8 @@ const fetchOddsForSport = async (sportKey, sportDisplay) => {
             if (!apiKey) continue;
 
             try {
-                const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${apiKey}&regions=us&markets=h2h&oddsFormat=american&commenceTimeFrom=${commenceTimeFrom}`;
+                const apiSportKey = getApiSportKey(sportKey) || sportKey; // Use centralized mapping
+                const url = `https://api.the-odds-api.com/v4/sports/${apiSportKey}/odds/?apiKey=${apiKey}&regions=us&markets=h2h&oddsFormat=american&commenceTimeFrom=${commenceTimeFrom}`;
                 console.log(`🔄 Trying API key ${i + 1}/${apiKeys.length} for ${sportDisplay}`);
                 
                 const response = await fetch(url);
@@ -411,93 +313,83 @@ const cleanupExcessGames = async (sportDisplay, maxGames) => {
 };
 
 /**
- * Get odds endpoint with simplified caching - limited games per sport
- * Only fetches and stores a small number of upcoming games per sport
- * @param {string} sport - Sport key to fetch odds for
+ * Get odds endpoint - simplified to only handle individual sports
+ * @param {string} sport - Sport key to fetch odds for (required, no 'all' option)
  * @param {number} page - Page number to fetch
  * @param {number} limit - Number of items per page
- * @returns {Promise<Object>} Odds data
+ * @returns {Promise<Object>} Odds data for the specified sport
  */
 app.get('/api/odds', authenticateToken, async (req, res) => {
     try {
         const { sport, page = 1, limit = 10, forceRefresh = 'false' } = req.query;
         const offset = (page - 1) * limit;
         
+        // Validate that sport is provided (no 'all' option allowed)
+        if (!sport) {
+            return res.status(400).json({ message: 'Sport parameter is required' });
+        }
+        
         console.log(`📊 Odds request: sport=${sport}, page=${page}, forceRefresh=${forceRefresh}`);
 
-        // Check current cache status for the requested sport(s)
-        const sportsToCheck = sport && sport !== 'all' ? [sport] : Object.keys(SPORT_CONFIG.sports);
+        // Find the sport info by display name
+        const supportedSports = getSupportedSports();
+        const sportInfo = supportedSports.find(s => s.label === sport);
+        if (!sportInfo) {
+            return res.status(400).json({ message: `Unsupported sport: ${sport}` });
+        }
         
-        for (const sportKey of sportsToCheck) {
-            if (!SPORT_CONFIG.sports[sportKey]) continue;
-            
-            const sportInfo = SPORT_CONFIG.sports[sportKey];
-            const maxGames = getMaxGames(sportKey);
-            
-            // Check if we need fresh data for this sport
-            const cacheStatus = await new Promise((resolve, reject) => {
-                db.get(
-                    `SELECT COUNT(*) as count, MAX(created_at) as latest_update 
-                     FROM odds_cache 
-                     WHERE sport = ? AND datetime(commence_time) > datetime('now')`,
-                    [sportInfo.display],
-                    (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    }
-                );
-            });
+        const maxGames = getMaxGamesForSport(sportInfo.value);
+        
+        // Check if we need fresh data for this sport
+        const cacheStatus = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT COUNT(*) as count, MAX(created_at) as latest_update 
+                 FROM odds_cache 
+                 WHERE sport = ? AND datetime(commence_time) > datetime('now')`,
+                [sport],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
 
-            // Determine if we need to fetch fresh data (simplified logic)
-            const isForceRefresh = forceRefresh === 'true';
-            const needsFresh = isForceRefresh || 
-                !cacheStatus.latest_update || 
-                cacheStatus.count === 0 || 
-                (Date.now() - new Date(cacheStatus.latest_update).getTime()) > CACHE_DURATION;
+        // Determine if we need to fetch fresh data
+        const isForceRefresh = forceRefresh === 'true';
+        const needsFresh = isForceRefresh || 
+            !cacheStatus.latest_update || 
+            cacheStatus.count === 0 || 
+            (Date.now() - new Date(cacheStatus.latest_update).getTime()) > CACHE_DURATION;
 
-            if (needsFresh) {
-                const refreshReason = isForceRefresh ? 'force refresh requested' : 
-                    cacheStatus.count === 0 ? 'no cache' : 'stale cache';
-                console.log(`🔄 Fetching fresh data for ${sportInfo.display} (${refreshReason}, ${cacheStatus.count}/${maxGames} games in cache)`);
-                await fetchOddsForSport(sportInfo.key, sportInfo.display);
-            } else {
-                const ageMinutes = Math.round((Date.now() - new Date(cacheStatus.latest_update).getTime()) / (1000 * 60));
-                console.log(`✅ Using cached ${sportInfo.display} data (${cacheStatus.count}/${maxGames} games, ${ageMinutes}m old)`);
-            }
+        if (needsFresh) {
+            const refreshReason = isForceRefresh ? 'force refresh requested' : 
+                cacheStatus.count === 0 ? 'no cache' : 'stale cache';
+            console.log(`🔄 Fetching fresh data for ${sport} (${refreshReason}, ${cacheStatus.count}/${maxGames} games in cache)`);
+            await fetchOddsForSport(sportInfo.value, sport);
+        } else {
+            const ageMinutes = Math.round((Date.now() - new Date(cacheStatus.latest_update).getTime()) / (1000 * 60));
+            console.log(`✅ Using cached ${sport} data (${cacheStatus.count}/${maxGames} games, ${ageMinutes}m old)`);
         }
 
-        // Get paginated results from cache
-        let query = 'SELECT * FROM odds_cache';
-        let countQuery = 'SELECT COUNT(*) as count FROM odds_cache';
-        let params = [];
-        let whereConditions = ['datetime(commence_time) > datetime(\'now\')'];
+        // Get paginated results from cache for this specific sport
+        const query = `SELECT * FROM odds_cache 
+                      WHERE sport = ? AND datetime(commence_time) > datetime('now')
+                      ORDER BY datetime(commence_time) ASC 
+                      LIMIT ? OFFSET ?`;
+        const countQuery = `SELECT COUNT(*) as count FROM odds_cache 
+                           WHERE sport = ? AND datetime(commence_time) > datetime('now')`;
 
-        if (sport && sport !== 'all') {
-            whereConditions.push('sport = ?');
-            params.push(sport);
-        }
-
-        if (whereConditions.length > 0) {
-            query += ' WHERE ' + whereConditions.join(' AND ');
-            countQuery += ' WHERE ' + whereConditions.join(' AND ');
-        }
-
-        // Sort by commence_time ascending (next games first) - this ensures chronological order across all sports
-        query += ` ORDER BY datetime(commence_time) ASC LIMIT ? OFFSET ?`;
-        params.push(parseInt(limit), offset);
-
-        // Get total count
+        // Get total count for this sport
         const countResult = await new Promise((resolve, reject) => {
-            const countParams = sport && sport !== 'all' ? [sport] : [];
-            db.get(countQuery, countParams, (err, row) => {
+            db.get(countQuery, [sport], (err, row) => {
                 if (err) reject(err);
                 else resolve(row);
             });
         });
 
-        // Get paginated results
+        // Get paginated results for this sport
         const results = await new Promise((resolve, reject) => {
-            db.all(query, params, (err, rows) => {
+            db.all(query, [sport, parseInt(limit), offset], (err, rows) => {
                 if (err) reject(err);
                 else resolve(rows);
             });
@@ -514,13 +406,13 @@ app.get('/api/odds', authenticateToken, async (req, res) => {
             odds: JSON.parse(game.odds)
         }));
 
-        // Debug logging for game order
+        // Debug logging
         if (formattedResults.length > 0) {
-            console.log(`📅 Returning ${formattedResults.length} games for page ${page}:`);
+            console.log(`📅 Returning ${formattedResults.length} ${sport} games for page ${page}:`);
             formattedResults.slice(0, 3).forEach((game, idx) => {
                 const gameDate = new Date(game.commenceTime);
                 const daysFromNow = Math.ceil((gameDate - new Date()) / (1000 * 60 * 60 * 24));
-                console.log(`   ${idx + 1}. ${game.sport} - ${game.homeTeam} vs ${game.awayTeam} (${daysFromNow} days)`);
+                console.log(`   ${idx + 1}. ${game.homeTeam} vs ${game.awayTeam} (${daysFromNow} days)`);
             });
             if (formattedResults.length > 3) {
                 console.log(`   ... and ${formattedResults.length - 3} more games`);
@@ -546,8 +438,8 @@ app.get('/api/odds', authenticateToken, async (req, res) => {
 const initializeOddsData = async () => {
     console.log('\n🏈 SIMPLIFIED CACHE INITIALIZATION 🏈');
     console.log('=====================================');
-    console.log(`⚡ Limited to ${SPORT_CONFIG.maxGamesPerSport} games per sport for efficiency`);
-    console.log(`🔄 Cache refreshes every ${SPORT_CONFIG.cacheRefreshMinutes} minutes`);
+    console.log(`⚡ Using centralized sports configuration for all leagues`);
+    console.log(`🔄 Cache refreshes every ${CACHE_REFRESH_MINUTES} minutes`);
 
     let totalCachedGames = 0;
     let totalFreshGames = 0;
@@ -569,14 +461,18 @@ const initializeOddsData = async () => {
 
     // 🗑️ Clean up excess games for each sport based on current limits
     console.log('🗑️  Cleaning up excess games beyond configured limits...');
-    for (const [sportKey, sportInfo] of Object.entries(SPORT_CONFIG.sports)) {
-        const maxGames = getMaxGames(sportKey);
-        await cleanupExcessGames(sportInfo.display, maxGames);
+    const supportedSports = getSupportedSports();
+    for (const sport of supportedSports) {
+        const sportKey = sport.value;
+        const maxGames = getMaxGamesForSport(sportKey);
+        await cleanupExcessGames(sport.label, maxGames);
     }
 
-    for (const [sportKey, sportInfo] of Object.entries(SPORT_CONFIG.sports)) {
+    for (const sport of supportedSports) {
+        const sportKey = sport.value;
+        const sportInfo = { display: sport.label, key: sportKey };
         try {
-            const maxGames = getMaxGames(sportKey);
+            const maxGames = getMaxGamesForSport(sportKey);
             
             // Check current cache status for this sport
             const cacheStatus = await new Promise((resolve, reject) => {
@@ -654,7 +550,7 @@ const initializeOddsData = async () => {
                 cachedGames: 0,
                 freshGames: 0,
                 totalGames: 0,
-                maxGames: getMaxGames(sportKey),
+                maxGames: getMaxGamesForSport(sportKey),
                 error: error.message
             });
         }
@@ -689,7 +585,7 @@ const initializeOddsData = async () => {
     console.log(`💾 Games served from cache: ${totalCachedGames}`);
     console.log(`🔄 Games fetched fresh from API: ${totalFreshGames}`);
     console.log(`🎯 Total upcoming games available: ${totalCachedGames + totalFreshGames}`);
-    console.log(`⚡ Limited to ${SPORT_CONFIG.maxGamesPerSport} games per sport to conserve API calls`);
+    console.log(`⚡ Games per sport limited by individual sport configurations to conserve API calls`);
     
     if (totalFreshGames > 0) {
         console.log(`📡 API calls made: ${cacheReport.filter(r => r.freshGames > 0).length}`);
@@ -1009,12 +905,14 @@ const fetchFreshOddsForGame = async (sport, homeTeam, awayTeam) => {
     try {
         console.log(`🔄 Fetching fresh odds for betting operation: ${homeTeam} vs ${awayTeam} (${sport})`);
         
-        // Get sport configuration
-        const sportConfig = Object.values(SPORT_CONFIG.sports).find(s => s.display === sport);
-        if (!sportConfig) {
+        // Get sport configuration by finding the API sport key
+        const supportedSports = getSupportedSports();
+        const sportInfo = supportedSports.find(s => s.label === sport);
+        if (!sportInfo) {
             console.log(`❌ Sport configuration not found for: ${sport}`);
             return null;
         }
+        const apiSportKey = getApiSportKey(sportInfo.value);
 
         const apiKeys = config.server.odds.apiKeys;
         console.log(`🔑 Using ${apiKeys.length} API keys for fresh odds verification`);
@@ -1030,7 +928,7 @@ const fetchFreshOddsForGame = async (sport, homeTeam, awayTeam) => {
             try {
                 const now = new Date();
                 const commenceTimeFrom = now.toISOString().split('.')[0] + 'Z';
-                const url = `https://api.the-odds-api.com/v4/sports/${sportConfig.key}/odds/?apiKey=${apiKey}&regions=us&markets=h2h&oddsFormat=american&commenceTimeFrom=${commenceTimeFrom}`;
+                const url = `https://api.the-odds-api.com/v4/sports/${apiSportKey}/odds/?apiKey=${apiKey}&regions=us&markets=h2h&oddsFormat=american&commenceTimeFrom=${commenceTimeFrom}`;
                 
                 console.log(`🔄 Trying API key ${i + 1}/${apiKeys.length} for fresh odds verification`);
                 
@@ -1182,6 +1080,15 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
             sport,
             game_date
         });
+
+        // Check if betting is still allowed for this sport and game time
+        if (!isBettingAllowed(game_date, sport)) {
+            const sportConfig = getSportConfig(sport);
+            const cutoffMinutes = sportConfig ? sportConfig.minBetCutoff : 15;
+            return res.status(400).json({ 
+                message: `Cannot place bet - game starts in less than ${cutoffMinutes} minutes` 
+            });
+        }
 
         // 🔄 VERIFY CURRENT ODDS FOR BETTING OPERATION
         console.log(`🔍 Verifying current odds for bet placement...`);
@@ -1368,14 +1275,12 @@ app.get('/sell-quote/:betId', authenticateToken, async (req, res) => {
             return res.status(404).json({ error: "Bet not found or not eligible for sale" });
         }
 
-        // Check if the game is still more than 15 minutes away
-        const gameTime = new Date(bet.game_date);
-        const now = new Date();
-        const minutesUntilGame = (gameTime - now) / (1000 * 60);
-
-        if (minutesUntilGame <= 15) {
+        // Check if betting is still allowed for this sport
+        if (!isBettingAllowed(bet.game_date, bet.sport)) {
+            const sportConfig = getSportConfig(bet.sport);
+            const cutoffMinutes = sportConfig ? sportConfig.minBetCutoff : 15;
             return res.status(400).json({ 
-                error: "Cannot sell bet - game starts in less than 15 minutes or has already started" 
+                error: `Cannot sell bet - game starts in less than ${cutoffMinutes} minutes or has already started` 
             });
         }
 
@@ -1428,6 +1333,11 @@ app.get('/sell-quote/:betId', authenticateToken, async (req, res) => {
         sellValue = Math.max(sellValue, bet.amount * 0.05);
 
         const profitLoss = sellValue - bet.amount;
+
+        // Calculate minutes until game for display
+        const gameTime = new Date(bet.game_date);
+        const now = new Date();
+        const minutesUntilGame = (gameTime - now) / (1000 * 60);
 
         res.json({
             success: true,
@@ -1801,11 +1711,13 @@ app.post('/api/resolve-completed-games', authenticateToken, async (req, res) => 
                         
                         // Determine sport from game info
                         const sport = gameInfo.sport;
-                        const sportKey = SPORT_CONFIG.sports[sport]?.key;
+                        const supportedSports = getSupportedSports();
+                        const sportInfo = supportedSports.find(s => s.label === sport);
                         
-                        if (!sportKey) {
+                        if (!sportInfo) {
                             throw new Error(`Unknown sport: ${sport}`);
                         }
+                        const sportKey = getApiSportKey(sportInfo.value);
                         
                         // Fetch completed games from the API with scores
                         let gameResult = null;
@@ -2036,7 +1948,7 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/New_York') => 
             hour: '2-digit',
             minute: '2-digit',
             second: '2-digit',
-            hour12: false
+            hour12: true
         };
         
         const formatter = new Intl.DateTimeFormat('en-US', options);
@@ -2064,5 +1976,5 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/New_York') => 
 // Start the server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log('✅ Fantasy Sports Betting API ready');
+    console.log('Fantasy Sports Betting API ready');
 });

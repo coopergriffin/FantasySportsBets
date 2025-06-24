@@ -95,11 +95,11 @@ export const register = async (userData) => {
 /**
  * Fetches current odds from the server
  * @param {number} page - The page number to fetch
- * @param {string} sport - The sport to filter by
+ * @param {string} sport - The sport to filter by (required, no 'all' option)
  * @param {boolean} forceRefresh - Whether to force refresh from API (bypasses cache)
  * @returns {Promise<Object>} Object containing games array and pagination info
  */
-export const fetchOdds = async (page = 1, sport = 'all', forceRefresh = false) => {
+export const fetchOdds = async (page = 1, sport = 'NFL', forceRefresh = false) => {
   try {
     console.log('Fetching odds:', { page, sport, forceRefresh });
     const params = new URLSearchParams({
