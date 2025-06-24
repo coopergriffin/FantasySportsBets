@@ -1,103 +1,30 @@
 /**
- * MainLayout Styles
- * Responsive layout with content area and sidebar for ads
+ * MainLayout Styles - Clean vertical layout
+ * Simple container layout that supports vertical ad placement between components
  */
 
 .main-layout {
-  min-height: calc(100vh - 200px); /* Adjust based on header height */
-  background: #0a0a0a;
-}
-
-.layout-container {
-  max-width: 1400px;
+  width: 100%;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 2rem 1rem;
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 2rem;
-  align-items: start;
+  padding: 0 20px;
+  box-sizing: border-box;
 }
 
-/* Main content area */
-.content-area {
-  background: rgba(26, 26, 26, 0.8);
-  border-radius: 12px;
-  padding: 1.5rem;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-  border: 1px solid #333;
-  backdrop-filter: blur(10px);
-}
-
-/* Sidebar for ads */
-.sidebar {
-  position: sticky;
-  top: 2rem;
-  height: fit-content;
-}
-
-.sidebar-content {
+.content-container {
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 20px;
 }
 
-.sidebar-spacer {
-  margin-top: 1rem;
-}
-
-/* Responsive Design */
-@media (max-width: 1200px) {
-  .layout-container {
-    grid-template-columns: 1fr 280px;
-    gap: 1.5rem;
-  }
-}
-
-@media (max-width: 968px) {
-  .layout-container {
-    grid-template-columns: 1fr;
-    gap: 1rem;
-  }
-  
-  .sidebar {
-    position: static;
-    order: 2;
-  }
-  
-  .sidebar-content {
-    flex-direction: row;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
-  
-  .content-area {
-    order: 1;
-  }
-}
-
+/* Responsive design */
 @media (max-width: 768px) {
-  .layout-container {
-    padding: 1rem;
+  .main-layout {
+    padding: 0 15px;
   }
   
-  .content-area {
-    padding: 1rem;
-  }
-  
-  .sidebar-content {
-    flex-direction: column;
-    align-items: center;
-  }
-}
-
-/* Hide sidebar ads on very small screens if needed */
-@media (max-width: 480px) {
-  .sidebar {
-    display: none;
-  }
-  
-  .layout-container {
-    grid-template-columns: 1fr;
+  .content-container {
+    gap: 15px;
   }
 } 

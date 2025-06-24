@@ -127,18 +127,19 @@ const ADS_CONFIG = {
     // Ad placement configuration
     placements: {
         header: {
-            enabled: true,
-            type: 'banner',
+            enabled: false,
             size: '728x90'
         },
         sidebar: {
-            enabled: true,
-            type: 'rectangle',
+            enabled: false,
             size: '300x250'
         },
+        banner: {
+            enabled: true,
+            size: '728x90'
+        },
         betweenGames: {
-            enabled: false, // Disabled for better UX
-            type: 'banner',
+            enabled: true,
             size: '728x90'
         }
     },

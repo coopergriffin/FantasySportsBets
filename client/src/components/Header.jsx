@@ -1,11 +1,17 @@
 /**
- * Header Component
+ * Header Component - Professional navigation and branding
  * 
- * Displays the app logo, navigation, and header advertisements.
- * Responsive design for different screen sizes.
+ * Displays the FantasyBets logo, user information, and global controls.
+ * Includes timezone selector for international users and navigation toggles.
+ * Features responsive design and header advertisement placement.
+ * 
+ * @param {Object} user - Current user object with balance and username
+ * @param {Function} onLogout - Logout handler function
+ * @param {boolean} showLeaderboard - Current leaderboard view state
+ * @param {Function} setShowLeaderboard - Toggle leaderboard visibility
+ * @param {Function} onTimezoneChange - Handle timezone selection changes
  */
 
-import AdComponent from './AdComponent';
 import './Header.css';
 
 function Header({ user, onLogout, showLeaderboard, setShowLeaderboard, onTimezoneChange }) {
@@ -95,9 +101,6 @@ function Header({ user, onLogout, showLeaderboard, setShowLeaderboard, onTimezon
           </div>
         </nav>
       </div>
-
-      {/* Header Advertisement */}
-      <AdComponent placement="header" className="header-ad" />
     </header>
   );
 }

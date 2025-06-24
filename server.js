@@ -25,46 +25,35 @@ const {
     isBettingAllowed 
 } = require('./sports-config');
 
-// ============================================================================
-// UNIFIED SPORTS CONFIGURATION
-// ============================================================================
 /**
- * Sports configuration is now centralized in sports-config.js
- * 
- * 🔧 TO ADD NEW SPORTS:
- * 1. Edit sports-config.js and add the sport to SPORTS_CONFIG
- * 2. Add API mapping in API_PROVIDERS
- * 3. Restart server - changes take effect immediately
- * 
- * 🔧 TO CHANGE API PROVIDER:
- * 1. Edit sports-config.js and change CURRENT_API_PROVIDER
- * 2. Ensure new provider has sport mappings
- * 3. Restart server
+ * Sports Configuration Import
+ * All sports settings centralized in sports-config.js for easy management
  */
 
-// Legacy cache refresh setting (now centralized in sports-config.js)
+/**
+ * Cache Configuration
+ * Centralized cache settings for consistent behavior
+ */
 const CACHE_REFRESH_MINUTES = 60;
+const CACHE_DURATION = CACHE_REFRESH_MINUTES * 60 * 1000;
 
-// Helper function to round monetary values to 2 decimal places
+/**
+ * Helper function to round monetary values to 2 decimal places
+ * @param {number} amount - Amount to round
+ * @returns {number} Rounded amount
+ */
 const roundToTwoDecimals = (amount) => {
     return Math.round((amount + Number.EPSILON) * 100) / 100;
 };
 
-// ============================================================================
-// DATABASE AND CACHE SETUP
-// ============================================================================
-
-// Cache configuration
-const CACHE_DURATION = CACHE_REFRESH_MINUTES * 60 * 1000; // Convert to milliseconds
-
-// Cache table setup
+/**
+ * Database Connection
+ * SQLite for development, ready for PostgreSQL migration in production
+ */
 const db = new sqlite3.Database('./bets.db', (err) => {
     if (err) console.error('Error connecting to database:', err);
     else console.log('Connected to SQLite database.');
 });
-
-// Note: Cache management is now handled directly in the database through the odds_cache table
-// The previous in-memory cache functions are no longer needed since we simplified to individual sports only
 
 
 
@@ -228,7 +217,18 @@ const fetchOddsForSport = async (sportKey, sportDisplay) => {
 
         // Insert each game into the database
         for (const game of sortedGames) {
-            const odds = game.bookmakers?.[0]?.markets?.[0]?.outcomes || [];
+            const rawOdds = game.bookmakers?.[0]?.markets?.[0]?.outcomes || [];
+            
+            // Properly map odds to teams by name instead of relying on array order
+            const homeTeamOdds = rawOdds.find(odd => odd.name === game.home_team);
+            const awayTeamOdds = rawOdds.find(odd => odd.name === game.away_team);
+            
+            // Create properly ordered odds array with consistent team mapping
+            const orderedOdds = [
+                homeTeamOdds || { name: game.home_team, price: null },
+                awayTeamOdds || { name: game.away_team, price: null }
+            ];
+            
             try {
                 await new Promise((resolve, reject) => {
                     db.run(
@@ -240,7 +240,7 @@ const fetchOddsForSport = async (sportKey, sportDisplay) => {
                     game.home_team,
                     game.away_team,
                     game.commence_time,
-                    JSON.stringify(odds)
+                    JSON.stringify(orderedOdds)
                         ],
                         (err) => {
                             if (err) reject(err);
@@ -254,7 +254,7 @@ const fetchOddsForSport = async (sportKey, sportDisplay) => {
             }
         }
 
-        // 🧹 EXTRA CLEANUP: Remove any games beyond our limit (safety measure)
+        // Clean up excess games beyond configured limit
         await cleanupExcessGames(sportDisplay, maxGames);
 
         console.log(`✅ Cached ${sortedGames.length}/${maxGames} upcoming ${sportDisplay} games`);
@@ -1091,7 +1091,7 @@ const verifyOddsForBetting = async (sport, game) => {
 
 /**
  * Place Bet Endpoint
- * Handles bet placement and balance updates with fresh odds verification
+ * Handles bet placement and balance updates with fresh odds verification and auto-updates
  */
 app.post('/api/bets', authenticateToken, async (req, res) => {
     const { game, team, amount, odds, sport, game_date } = req.body;
@@ -1117,92 +1117,124 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
             });
         }
 
+        // Store original odds and initialize variables
+        const originalOdds = odds;
+        let finalOdds = odds;
+        let oddsUpdated = false;
+
         // 🔄 VERIFY CURRENT ODDS FOR BETTING OPERATION
         console.log(`🔍 Verifying current odds for bet placement...`);
-        const currentOddsData = await verifyOddsForBetting(sport, game);
-        
-        if (currentOddsData && currentOddsData.length > 0) {
-            // Find the odds for the selected team
-            const teamOdds = currentOddsData.find(odd => 
-                odd.name === team || 
-                (team && team.includes(odd.name)) || 
-                (odd.name && odd.name.includes(team))
-            );
+        try {
+            const currentOddsData = await verifyOddsForBetting(sport, game);
             
-            if (teamOdds) {
-                const oddsVerified = teamOdds.price;
-                const oddsDifference = Math.abs(odds - oddsVerified);
+            if (currentOddsData && currentOddsData.length > 0) {
+                // Find the odds for the selected team
+                const teamOdds = currentOddsData.find(odd => 
+                    odd.name === team || 
+                    (team && team.includes(odd.name)) || 
+                    (odd.name && odd.name.includes(team))
+                );
                 
-                console.log(`📊 Odds verification: Original ${odds}, Current ${oddsVerified}, Difference: ${oddsDifference}`);
-                
-                // If odds have changed significantly (more than 10 points), reject the bet
-                if (oddsDifference > 10) {
-                    console.log(`❌ Odds have changed significantly! Rejecting bet.`);
-                    return res.status(400).json({ 
-                        message: 'Odds have changed significantly',
-                        originalOdds: odds,
-                        currentOdds: oddsVerified,
-                        difference: oddsDifference
-                    });
+                if (teamOdds) {
+                    const oddsVerified = teamOdds.price;
+                    const oddsDifference = Math.abs(odds - oddsVerified);
+                    
+                    console.log(`📊 Odds verification: Original ${odds}, Current ${oddsVerified}, Difference: ${oddsDifference}`);
+                    
+                    // Only reject for truly extreme cases (odds difference > 1000 points)
+                    if (oddsDifference > 1000) {
+                        console.log(`❌ Odds have changed extremely dramatically! Original: ${odds}, Current: ${oddsVerified}`);
+                        return res.status(400).json({ 
+                            message: `Odds have changed extremely dramatically! Original: ${odds}, Current: ${oddsVerified}. Please try again in a moment.`,
+                            originalOdds: odds,
+                            currentOdds: oddsVerified,
+                            difference: oddsDifference
+                        });
+                    }
+                    // For any significant changes, auto-update to current odds
+                    else if (oddsDifference > 5) {
+                        finalOdds = oddsVerified;
+                        oddsUpdated = true;
+                        console.log(`🔄 Auto-updating odds from ${originalOdds} to ${oddsVerified} (difference: ${oddsDifference} points)`);
+                    } else {
+                        console.log(`✅ Odds verification passed (difference: ${oddsDifference} points - minimal change)`);
+                    }
                 } else {
-                    console.log(`✅ Odds verification passed (difference: ${oddsDifference} points)`);
+                    console.log(`⚠️ Could not find odds for team ${team}, proceeding with original odds`);
                 }
             } else {
-                console.log(`⚠️  Could not find odds for team ${team}, proceeding with original odds`);
+                console.log(`⚠️ Could not verify current odds, proceeding with original odds`);
             }
-        } else {
-            console.log(`⚠️  Could not verify current odds, proceeding with original odds`);
+        } catch (oddsError) {
+            console.log(`⚠️ Error verifying odds: ${oddsError.message}, proceeding with original odds`);
         }
 
-        // Start a transaction
+        // Start a database transaction
         await db.run('BEGIN TRANSACTION');
 
-        // Check user balance
-        const user = await new Promise((resolve, reject) => {
-            db.get('SELECT balance FROM users WHERE id = ?', [userId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
+        try {
+            // Check user balance
+            const user = await new Promise((resolve, reject) => {
+                db.get('SELECT balance FROM users WHERE id = ?', [userId], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
             });
-        });
 
-        if (!user || user.balance < amount) {
+            if (!user || user.balance < amount) {
+                await db.run('ROLLBACK');
+                return res.status(400).json({ message: 'Insufficient balance' });
+            }
+
+            // Round amount to 2 decimal places
+            const roundedAmount = roundToTwoDecimals(amount);
+
+            // Place bet and update balance using final odds
+            await db.run(
+                'INSERT INTO bets (user_id, game, team, amount, odds, sport, game_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime(\'now\', \'utc\'))',
+                [userId, game, team, roundedAmount, finalOdds, sport, game_date]
+            );
+
+            await db.run(
+                'UPDATE users SET balance = ROUND(balance - ?, 2) WHERE id = ?',
+                [roundedAmount, userId]
+            );
+
+            // Commit transaction
+            await db.run('COMMIT');
+
+            // Get updated balance
+            const updatedUser = await new Promise((resolve, reject) => {
+                db.get('SELECT balance FROM users WHERE id = ?', [userId], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+
+            // Send success response
+            res.json({
+                success: true,
+                message: oddsUpdated ? 
+                    `Bet placed successfully with updated odds (${finalOdds})` : 
+                    'Bet placed successfully',
+                newBalance: roundToTwoDecimals(updatedUser.balance),
+                oddsUpdated: oddsUpdated,
+                finalOdds: finalOdds,
+                originalOdds: originalOdds
+            });
+
+        } catch (dbError) {
             await db.run('ROLLBACK');
-            return res.status(400).json({ message: 'Insufficient balance' });
+            throw dbError;
         }
 
-        // Round amount to 2 decimal places
-        const roundedAmount = roundToTwoDecimals(amount);
-
-        // Place bet and update balance
-        await db.run(
-            'INSERT INTO bets (user_id, game, team, amount, odds, sport, game_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime(\'now\', \'utc\'))',
-            [userId, game, team, roundedAmount, odds, sport, game_date]
-        );
-
-        await db.run(
-            'UPDATE users SET balance = ROUND(balance - ?, 2) WHERE id = ?',
-            [roundedAmount, userId]
-        );
-
-        // Commit transaction
-        await db.run('COMMIT');
-
-        // Get updated balance
-        const updatedUser = await new Promise((resolve, reject) => {
-            db.get('SELECT balance FROM users WHERE id = ?', [userId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        res.json({
-            success: true,
-            message: 'Bet placed successfully',
-            newBalance: roundToTwoDecimals(updatedUser.balance)
-        });
     } catch (error) {
         console.error('Error placing bet:', error);
-        await db.run('ROLLBACK');
+        try {
+            await db.run('ROLLBACK');
+        } catch (rollbackError) {
+            console.error('Error rolling back transaction:', rollbackError);
+        }
         res.status(500).json({ message: 'Error placing bet' });
     }
 });

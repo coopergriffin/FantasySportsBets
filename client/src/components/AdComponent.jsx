@@ -1,11 +1,12 @@
 /**
- * AdComponent - Flexible Advertisement Display Component
+ * AdComponent - Flexible Advertisement Display System
  * 
- * Supports both development (fake ads) and production (real ad platforms) modes.
- * Can be easily toggled on/off and supports different ad placements.
+ * Provides revenue-generating advertisement system with multiple placement types.
+ * Supports demo mode for presentations and production mode for real ads.
+ * Configuration-driven via backend API with easy toggle controls.
  * 
- * @param {string} placement - Ad placement type ('header', 'sidebar', 'betweenGames')
- * @param {string} className - Additional CSS classes
+ * @param {string} placement - Ad placement: 'header', 'sidebar', 'betweenGames'  
+ * @param {string} className - Additional CSS classes for styling
  */
 
 import { useState, useEffect } from 'react';
@@ -50,7 +51,8 @@ function AdComponent({ placement = 'sidebar', className = '' }) {
       adPool = config.fakeAds.banner || [];
     } else if (placement === 'sidebar') {
       adPool = config.fakeAds.sportsbook || [];
-    } else if (placement === 'betweenGames') {
+    } else if (placement === 'banner' || placement === 'betweenGames') {
+      // Use banner ads for the new landscape placement between components
       adPool = config.fakeAds.banner || [];
     }
 

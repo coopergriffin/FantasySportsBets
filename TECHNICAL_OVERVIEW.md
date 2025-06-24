@@ -1,8 +1,8 @@
-# Fantasy Sports Betting Platform - Technical Overview
+# FantasyBets - Technical Overview
 
 ## 📋 Project Overview
 
-This is a full-stack web application for fantasy sports betting, built with modern web technologies. The platform allows users to register, login, place bets on various sports games, track their betting history, and view leaderboards.
+FantasyBets is a responsible sports betting platform designed to protect users from predatory gambling practices while providing an engaging, fair betting experience. Built with modern web technologies, it emphasizes transparency, education, and user protection.
 
 ## 🏗️ Architecture
 

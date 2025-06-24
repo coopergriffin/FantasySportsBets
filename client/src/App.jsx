@@ -14,6 +14,7 @@ import Leaderboard from './components/Leaderboard'; // Global leaderboard compon
 import Notification from './components/Notification'; // Notification component
 import Header from './components/Header'; // Header with logo and navigation
 import MainLayout from './components/MainLayout'; // Main layout with sidebar ads
+import AdComponent from './components/AdComponent'; // Advertisement component
 import { fetchOdds, placeBet as placeBetApi, resolveCompletedGames, updateUserTimezone } from "./api"; // API communication functions
 import { formatTimeForDisplay } from "./utils/timeUtils"; // Time formatting utilities
 import "./App.css"; // Component styles
@@ -199,25 +200,46 @@ function App() {
         setCustomAmount('');
         // Trigger betting history refresh
         setBetsRefreshTrigger(prev => prev + 1);
-        showNotification("Bet placed successfully!", "success");
+        
+        // Show appropriate success message based on odds updates
+        if (response.oddsUpdated) {
+          showNotification(
+            `Bet placed successfully! Odds were updated from ${response.originalOdds} to ${response.finalOdds} before placing the bet.`, 
+            "success"
+          );
+          // Refresh odds display to show current values
+          try {
+            const oddsResponse = await fetchOdds(currentPage, selectedSport);
+            setOdds(oddsResponse.games || []);
+          } catch (refreshError) {
+            console.error('Error refreshing odds display:', refreshError);
+          }
+        } else {
+          showNotification("Bet placed successfully!", "success");
+        }
       }
     } catch (error) {
-              // Handle odds change errors specifically
-        if (error.message && error.message.includes('Odds have changed significantly')) {
-          const errorData = error.details || {};
-          const message = `⚠️ Odds have changed! Original: ${errorData.originalOdds || 'N/A'}, Current: ${errorData.currentOdds || 'N/A'}. Please refresh and try again.`;
-          showNotification(message, "warning");
-        // Refresh odds data
-        try {
-          const response = await fetchOdds(1, selectedSport);
-          setOdds(response.games || []);
-          setPagination(response.pagination);
-        } catch (refreshError) {
-          console.error('Error refreshing odds:', refreshError);
-        }
-              } else {
-          showNotification(error.message || "Failed to place bet", "error");
-        }
+      // Auto-refresh odds for any betting error to get current data
+      console.log('Betting error occurred, auto-refreshing odds:', error.message);
+      
+      try {
+        const response = await fetchOdds(currentPage, selectedSport);
+        setOdds(response.games || []);
+        console.log('✅ Odds refreshed automatically after betting error');
+      } catch (refreshError) {
+        console.error('Error auto-refreshing odds:', refreshError);
+      }
+      
+      // Handle different types of errors
+      if (error.message && error.message.includes('Odds have changed')) {
+        showNotification("⚠️ Odds were updated! The current odds are now displayed. Please try your bet again with the updated odds.", "warning");
+      } else if (error.message && error.message.includes('Insufficient balance')) {
+        showNotification("❌ Insufficient balance for this bet.", "error");
+      } else if (error.message && error.message.includes('game starts in less than')) {
+        showNotification("⏰ Betting cutoff reached - this game is too close to starting time.", "warning");
+      } else {
+        showNotification(error.message || "Failed to place bet. Odds have been refreshed - please try again.", "error");
+      }
     }
   };
 
@@ -296,7 +318,8 @@ function App() {
   };
 
   /**
-   * Refreshes betting history and resolves any completed games
+   * Refreshes betting history and auto-resolves completed games
+   * Called when user manually refreshes or after significant actions
    */
   const handleRefreshBets = async () => {
     try {
@@ -388,184 +411,212 @@ function App() {
 
           {/* Main layout with sidebar ads */}
           <MainLayout>
-
-          {showLeaderboard ? (
-            <Leaderboard />
-          ) : (
-            <>
-              {/* Sports filter controls */}
-              <div className="controls">
-                <div className="sport-selector">
-                  <label>Select Sport:</label>
-                  <select 
-                    value={selectedSport} 
-                    onChange={(e) => setSelectedSport(e.target.value)}
-                  >
-                    {SPORTS.map(sport => (
-                      <option key={sport.value} value={sport.value}>
-                        {sport.label}
-                      </option>
-                    ))}
-                  </select>
+            {showLeaderboard ? (
+              <Leaderboard />
+            ) : (
+              <>
+                {/* Sports filter controls */}
+                <div className="controls">
+                  <div className="sport-selector">
+                    <label>Select Sport:</label>
+                    <select 
+                      value={selectedSport} 
+                      onChange={(e) => setSelectedSport(e.target.value)}
+                    >
+                      {SPORTS.map(sport => (
+                        <option key={sport.value} value={sport.value}>
+                          {sport.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="refresh-controls">
+                    <button 
+                      className="refresh-button games-refresh"
+                      onClick={handleRefreshGames}
+                      disabled={isRefreshingGames}
+                    >
+                      {isRefreshingGames ? '🔄 Refreshing...' : '🔄 Refresh Games'}
+                    </button>
+                    {lastGamesRefresh && (
+                      <span className="last-refresh">
+                        Last refreshed: {new Date(lastGamesRefresh).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                
-                <div className="refresh-controls">
-                  <button 
-                    className="refresh-button games-refresh"
-                    onClick={handleRefreshGames}
-                    disabled={isRefreshingGames}
-                  >
-                    {isRefreshingGames ? '🔄 Refreshing...' : '🔄 Refresh Games'}
-                  </button>
-                  {lastGamesRefresh && (
-                    <span className="last-refresh">
-                      Last refreshed: {new Date(lastGamesRefresh).toLocaleTimeString()}
-                    </span>
-                  )}
-                </div>
-              </div>
 
-              {/* Games listing */}
-              <div className="games-container">
-                {isLoading ? (
-                  <div className="loading">Loading games...</div>
-                ) : error ? (
-                  <div className="error">{error}</div>
-                ) : odds.length === 0 ? (
-                  <div className="no-games">No games available for the selected sport.</div>
-                ) : (
-                  odds.map((game) => (
-                    <div key={game.id} className="game-card">
-                      <div className="game-header">
-                        <span className="sport-tag">{game.sport}</span>
-                        <span className="game-time">
-                          {(() => {
-                            const userTimezone = user?.timezone || 'America/Toronto';
-                            const formattedTime = formatTimeForDisplay(game.commenceTime, userTimezone);
-                            return formattedTime ? formattedTime.full : 'Time unavailable';
-                          })()}
-                        </span>
-                      </div>
-                      <h3>{game.homeTeam} vs {game.awayTeam}</h3>
-                      
-                      {!expandedBets[game.id] ? (
-                        // Show odds and bet buttons for team selection
-                      <div className="odds-display">
-                        {game.odds && game.odds.length > 0 && (
-                            <div className="team-betting-options">
-                              <button 
-                                className="team-bet-button home-team"
-                                onClick={() => {
-                                  setSelectedTeam(game.homeTeam);
-                                  setExpandedBets(prev => ({ ...prev, [game.id]: true }));
-                                }}
-                              >
-                                <div className="team-info">
-                                  <span className="team-name">{game.homeTeam}</span>
-                                  <span className="odds">{game.odds[0]?.price > 0 ? '+' : ''}{game.odds[0]?.price}</span>
-                                </div>
-                              </button>
-                              <button 
-                                className="team-bet-button away-team"
-                                onClick={() => {
-                                  setSelectedTeam(game.awayTeam);
-                                  setExpandedBets(prev => ({ ...prev, [game.id]: true }));
-                                }}
-                              >
-                                <div className="team-info">
-                                  <span className="team-name">{game.awayTeam}</span>
-                                  <span className="odds">{game.odds[1]?.price > 0 ? '+' : ''}{game.odds[1]?.price}</span>
-                                </div>
-                              </button>
-                            </div>
-                          )}
+                {/* Advertisement banner between controls and games */}
+                <AdComponent placement="banner" />
+
+                {/* Games listing */}
+                <div className="games-container">
+                  {isLoading ? (
+                    <div className="loading">Loading games...</div>
+                  ) : error ? (
+                    <div className="error">{error}</div>
+                  ) : odds.length === 0 ? (
+                    <div className="no-games">No games available for the selected sport.</div>
+                  ) : (
+                    odds.map((game) => (
+                      <div key={game.id} className="game-card">
+                        <div className="game-header">
+                          <span className="sport-tag">{game.sport}</span>
+                          <span className="game-time">
+                            {(() => {
+                              const userTimezone = user?.timezone || 'America/Toronto';
+                              const formattedTime = formatTimeForDisplay(game.commenceTime, userTimezone);
+                              return formattedTime ? formattedTime.full : 'Time unavailable';
+                            })()}
+                          </span>
                         </div>
-                      ) : (
-                        // Show betting amount selection
-                        <div className="betting-options">
-                          <div className="selected-team">
-                            <p>Betting on: <strong>{selectedTeam}</strong></p>
-                            <button 
-                              className="change-team-button"
-                              onClick={() => {
-                                setSelectedTeam(null);
-                                setExpandedBets(prev => ({ ...prev, [game.id]: false }));
-                              }}
-                            >
-                              Change Team
-                              </button>
-                            </div>
-                            <div className="bet-amounts">
-                              {BET_AMOUNTS.map(amount => (
-                                <button
-                                  key={amount}
-                                  className={selectedAmount === amount ? 'selected' : ''}
+                        <h3>{game.homeTeam} vs {game.awayTeam}</h3>
+                        
+                        {!expandedBets[game.id] ? (
+                          // Show odds and bet buttons for team selection
+                        <div className="odds-display">
+                          {game.odds && game.odds.length > 0 && (
+                              <div className="team-betting-options">
+                                <button 
+                                  className="team-bet-button home-team"
                                   onClick={() => {
-                                    setSelectedAmount(amount);
-                                    setCustomAmount('');
+                                    setSelectedTeam(game.homeTeam);
+                                    setExpandedBets(prev => ({ ...prev, [game.id]: true }));
                                   }}
                                 >
-                                  ${amount}
+                                  <div className="team-info">
+                                    <span className="team-name">{game.homeTeam}</span>
+                                    <span className="odds">
+                                      {(() => {
+                                        // Find odds by team name instead of assuming array position
+                                        const homeOdds = game.odds.find(odd => odd.name === game.homeTeam);
+                                        const oddsValue = homeOdds?.price;
+                                        console.log(`🏠 Home team ${game.homeTeam}: odds = ${oddsValue}, full odds array:`, game.odds);
+                                        return oddsValue ? `${oddsValue > 0 ? '+' : ''}${oddsValue}` : 'N/A';
+                                      })()}
+                                    </span>
+                                  </div>
                                 </button>
-                              ))}
-                              <input
-                                type="number"
-                                placeholder="Custom amount"
-                                value={customAmount}
-                                onChange={(e) => {
-                                  setCustomAmount(e.target.value);
-                                  setSelectedAmount(null);
+                                <button 
+                                  className="team-bet-button away-team"
+                                  onClick={() => {
+                                    setSelectedTeam(game.awayTeam);
+                                    setExpandedBets(prev => ({ ...prev, [game.id]: true }));
+                                  }}
+                                >
+                                  <div className="team-info">
+                                    <span className="team-name">{game.awayTeam}</span>
+                                    <span className="odds">
+                                      {(() => {
+                                        // Find odds by team name instead of assuming array position
+                                        const awayOdds = game.odds.find(odd => odd.name === game.awayTeam);
+                                        const oddsValue = awayOdds?.price;
+                                        return oddsValue ? `${oddsValue > 0 ? '+' : ''}${oddsValue}` : 'N/A';
+                                      })()}
+                                    </span>
+                                  </div>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          // Show betting amount selection
+                          <div className="betting-options">
+                            <div className="selected-team">
+                              <p>Betting on: <strong>{selectedTeam}</strong></p>
+                              <button 
+                                className="change-team-button"
+                                onClick={() => {
+                                  setSelectedTeam(null);
+                                  setExpandedBets(prev => ({ ...prev, [game.id]: false }));
                                 }}
-                                min="1"
-                              />
+                              >
+                                Change Team
+                                </button>
+                              </div>
+                              <div className="bet-amounts">
+                                {BET_AMOUNTS.map(amount => (
+                                  <button
+                                    key={amount}
+                                    className={selectedAmount === amount ? 'selected' : ''}
+                                    onClick={() => {
+                                      setSelectedAmount(amount);
+                                      setCustomAmount('');
+                                    }}
+                                  >
+                                    ${amount}
+                                  </button>
+                                ))}
+                                <input
+                                  type="number"
+                                  placeholder="Custom amount"
+                                  value={customAmount}
+                                  onChange={(e) => {
+                                    setCustomAmount(e.target.value);
+                                    setSelectedAmount(null);
+                                  }}
+                                  min="1"
+                                />
+                              </div>
+                            <div className="bet-actions">
+                              <button 
+                                className="confirm-bet-button"
+                                disabled={!selectedTeam || (!selectedAmount && !customAmount)}
+                                onClick={() => {
+                                  // Find odds by team name instead of assuming array position
+                                  const teamOdds = game.odds.find(odd => odd.name === selectedTeam);
+                                  const selectedOdds = teamOdds?.price;
+                                  
+                                  if (!selectedOdds) {
+                                    showNotification("Unable to find odds for selected team", "error");
+                                    return;
+                                  }
+                                  
+                                  handlePlaceBet(game, customAmount || selectedAmount, selectedTeam, selectedOdds);
+                                }}
+                              >
+                                Confirm Bet
+                              </button>
+                              <button 
+                                className="cancel-bet-button"
+                                onClick={() => {
+                                  setExpandedBets(prev => ({ ...prev, [game.id]: false }));
+                                  setSelectedTeam(null);
+                                  setSelectedAmount(null);
+                                  setCustomAmount('');
+                                }}
+                              >
+                                Cancel
+                              </button>
                             </div>
-                          <div className="bet-actions">
-                            <button 
-                              className="confirm-bet-button"
-                              disabled={!selectedTeam || (!selectedAmount && !customAmount)}
-                              onClick={() => {
-                                const selectedOdds = selectedTeam === game.homeTeam ? game.odds[0]?.price : game.odds[1]?.price;
-                                handlePlaceBet(game, customAmount || selectedAmount, selectedTeam, selectedOdds);
-                              }}
-                            >
-                              Confirm Bet
-                            </button>
-                            <button 
-                              className="cancel-bet-button"
-                              onClick={() => {
-                                setExpandedBets(prev => ({ ...prev, [game.id]: false }));
-                                setSelectedTeam(null);
-                                setSelectedAmount(null);
-                                setCustomAmount('');
-                              }}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                          </div>
-                        )}
-                    </div>
-                  ))
+                            </div>
+                          )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Load more button */}
+                {!isLoading && pagination?.hasMore && (
+                  <button onClick={handleLoadMore} className="load-more-button">
+                    Load More Games
+                  </button>
                 )}
-              </div>
 
-              {/* Load more button */}
-              {!isLoading && pagination?.hasMore && (
-                <button onClick={handleLoadMore} className="load-more-button">
-                  Load More Games
-                </button>
-              )}
+                {/* Advertisement banner between games and betting panel */}
+                <AdComponent placement="banner" />
 
-              {/* Betting panel with active bets and history */}
-                            <BettingPanel 
-                userId={user.id} 
-                refreshTrigger={betsRefreshTrigger}
-                onBetSold={handleBetSold}
-                onRefreshBets={handleRefreshBets}
-                userTimezone={user?.timezone || 'America/Toronto'}
-              />
-            </>
-          )}
+                {/* Betting panel with active bets and history */}
+                <BettingPanel 
+                  userId={user.id} 
+                  refreshTrigger={betsRefreshTrigger}
+                  onBetSold={handleBetSold}
+                  onRefreshBets={handleRefreshBets}
+                  userTimezone={user?.timezone || 'America/Toronto'}
+                />
+              </>
+            )}
           </MainLayout>
         </div>
       )}
