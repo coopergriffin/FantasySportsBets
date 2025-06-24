@@ -165,70 +165,7 @@ const updateCache = async (games, sport = 'all') => {
     });
 };
 
-/**
- * Helper function to get mock odds data
- * @returns {Array} Array of mock games
- */
-function getMockOdds() {
-    return [
-        {
-            sport: 'NFL',
-            home_team: "Kansas City Chiefs",
-            away_team: "San Francisco 49ers",
-            odds: -110,
-            game_date: new Date(Date.now() + 86400000).toISOString()
-        },
-        {
-            sport: 'NFL',
-            home_team: "Green Bay Packers",
-            away_team: "Chicago Bears",
-            odds: +150,
-            game_date: new Date(Date.now() + 86400000).toISOString()
-        },
-        {
-            sport: 'NBA',
-            home_team: "LA Lakers",
-            away_team: "Golden State Warriors",
-            odds: +150,
-            game_date: new Date(Date.now() + 86400000).toISOString()
-        },
-        {
-            sport: 'NBA',
-            home_team: "Boston Celtics",
-            away_team: "Miami Heat",
-            odds: -120,
-            game_date: new Date(Date.now() + 86400000).toISOString()
-        },
-        {
-            sport: 'MLB',
-            home_team: "New York Yankees",
-            away_team: "Boston Red Sox",
-            odds: -120,
-            game_date: new Date(Date.now() + 86400000).toISOString()
-        },
-        {
-            sport: 'MLB',
-            home_team: "LA Dodgers",
-            away_team: "San Francisco Giants",
-            odds: +130,
-            game_date: new Date(Date.now() + 86400000).toISOString()
-        },
-        {
-            sport: 'NHL',
-            home_team: "Toronto Maple Leafs",
-            away_team: "Montreal Canadiens",
-            odds: +130,
-            game_date: new Date(Date.now() + 86400000).toISOString()
-        },
-        {
-            sport: 'NHL',
-            home_team: "New York Rangers",
-            away_team: "Boston Bruins",
-            odds: -115,
-            game_date: new Date(Date.now() + 86400000).toISOString()
-        }
-    ];
-}
+
 
 /**
  * Fetches odds from the API using multiple API keys with fallback
@@ -483,8 +420,10 @@ const cleanupExcessGames = async (sportDisplay, maxGames) => {
  */
 app.get('/api/odds', authenticateToken, async (req, res) => {
     try {
-        const { sport, page = 1, limit = 10 } = req.query;
+        const { sport, page = 1, limit = 10, forceRefresh = 'false' } = req.query;
         const offset = (page - 1) * limit;
+        
+        console.log(`📊 Odds request: sport=${sport}, page=${page}, forceRefresh=${forceRefresh}`);
 
         // Check current cache status for the requested sport(s)
         const sportsToCheck = sport && sport !== 'all' ? [sport] : Object.keys(SPORT_CONFIG.sports);
@@ -510,12 +449,16 @@ app.get('/api/odds', authenticateToken, async (req, res) => {
             });
 
             // Determine if we need to fetch fresh data (simplified logic)
-            const needsFresh = !cacheStatus.latest_update || 
+            const isForceRefresh = forceRefresh === 'true';
+            const needsFresh = isForceRefresh || 
+                !cacheStatus.latest_update || 
                 cacheStatus.count === 0 || 
                 (Date.now() - new Date(cacheStatus.latest_update).getTime()) > CACHE_DURATION;
 
             if (needsFresh) {
-                console.log(`🔄 Fetching fresh data for ${sportInfo.display} (${cacheStatus.count}/${maxGames} games in cache)`);
+                const refreshReason = isForceRefresh ? 'force refresh requested' : 
+                    cacheStatus.count === 0 ? 'no cache' : 'stale cache';
+                console.log(`🔄 Fetching fresh data for ${sportInfo.display} (${refreshReason}, ${cacheStatus.count}/${maxGames} games in cache)`);
                 await fetchOddsForSport(sportInfo.key, sportInfo.display);
             } else {
                 const ageMinutes = Math.round((Date.now() - new Date(cacheStatus.latest_update).getTime()) / (1000 * 60));
@@ -768,7 +711,8 @@ db.serialize(() => {
             password TEXT,
             email TEXT,
             balance REAL DEFAULT 1000.00,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at DATETIME DEFAULT (datetime('now', 'utc')),
+            timezone TEXT DEFAULT 'America/New_York'
         )
     `);
 
@@ -784,18 +728,45 @@ db.serialize(() => {
             sport TEXT,
             status TEXT DEFAULT 'pending',
             game_date TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT (datetime('now', 'utc')),
             status_changed_at DATETIME DEFAULT NULL,
+            final_amount REAL DEFAULT NULL,
+            profit_loss REAL DEFAULT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     `);
 
-    // Add status_changed_at column to existing bets table if it doesn't exist
+    // Add new columns to existing users table if they don't exist
+    db.run(`
+        ALTER TABLE users ADD COLUMN timezone TEXT DEFAULT 'America/New_York'
+    `, (err) => {
+        if (err && !err.message.includes('duplicate column name')) {
+            console.error('Error adding timezone column:', err);
+        }
+    });
+
+    // Add new columns to existing bets table if they don't exist
     db.run(`
         ALTER TABLE bets ADD COLUMN status_changed_at DATETIME DEFAULT NULL
     `, (err) => {
         if (err && !err.message.includes('duplicate column name')) {
             console.error('Error adding status_changed_at column:', err);
+        }
+    });
+
+    db.run(`
+        ALTER TABLE bets ADD COLUMN final_amount REAL DEFAULT NULL
+    `, (err) => {
+        if (err && !err.message.includes('duplicate column name')) {
+            console.error('Error adding final_amount column:', err);
+        }
+    });
+
+    db.run(`
+        ALTER TABLE bets ADD COLUMN profit_loss REAL DEFAULT NULL
+    `, (err) => {
+        if (err && !err.message.includes('duplicate column name')) {
+            console.error('Error adding profit_loss column:', err);
         }
     });
 
@@ -809,7 +780,7 @@ db.serialize(() => {
             away_team TEXT,
             commence_time TEXT,
             odds TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT (datetime('now', 'utc')),
             UNIQUE(sport, home_team, away_team, commence_time)
         )
     `);
@@ -817,26 +788,7 @@ db.serialize(() => {
     console.log('Connected to SQLite database.');
     console.log('Odds cache table ready');
 
-    // Create test users if they don't exist
-    const createTestUser = (username, password, email) => {
-        const hashedPassword = bcrypt.hashSync(password, 10);
-        db.run(
-            "INSERT OR IGNORE INTO users (username, password, email) VALUES (?, ?, ?)",
-            [username, hashedPassword, email],
-            (err) => {
-                if (err) {
-                    console.error('Error creating test user:', err);
-                } else {
-                    console.log('Test user created:', username);
-                }
-            }
-        );
-    };
-
-    // Create test users
-    createTestUser('testuser', 'test123', 'test@example.com');
-    createTestUser('johndoe', 'john123', 'john@example.com');
-    createTestUser('janedoe', 'jane123', 'jane@example.com');
+    console.log('Database initialized successfully');
 
     // Initialize odds data with comprehensive reporting
     setTimeout(() => {
@@ -977,12 +929,12 @@ app.post('/login', [
 
 /**
  * Get Current User Profile Endpoint
- * Returns current user's profile information
+ * Returns current user's profile information including timezone
  */
 app.get('/user', authenticateToken, (req, res) => {
     const userId = req.user.userId;
     
-    db.get('SELECT id, username, email, balance, created_at FROM users WHERE id = ?', [userId], (err, user) => {
+    db.get('SELECT id, username, email, balance, timezone, created_at FROM users WHERE id = ?', [userId], (err, user) => {
         if (err) {
             console.error('Database error fetching user:', err);
             return res.status(500).json({ error: 'Failed to fetch user data' });
@@ -1000,8 +952,221 @@ app.get('/user', authenticateToken, (req, res) => {
 });
 
 /**
+ * Update User Timezone Endpoint
+ * Updates the user's timezone preference
+ */
+app.put('/user/timezone', authenticateToken, [
+    check('timezone').notEmpty().withMessage('Timezone is required')
+], (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const userId = req.user.userId;
+    const { timezone } = req.body;
+
+    // List of common valid timezones
+    const validTimezones = [
+        'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+        'America/Phoenix', 'America/Anchorage', 'Pacific/Honolulu',
+        'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Rome',
+        'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Kolkata', 'Australia/Sydney',
+        'UTC'
+    ];
+
+    if (!validTimezones.includes(timezone)) {
+        return res.status(400).json({ error: 'Invalid timezone' });
+    }
+
+    db.run(
+        'UPDATE users SET timezone = ? WHERE id = ?',
+        [timezone, userId],
+        function(err) {
+            if (err) {
+                console.error('Error updating timezone:', err);
+                return res.status(500).json({ error: 'Failed to update timezone' });
+            }
+
+            res.json({
+                success: true,
+                message: 'Timezone updated successfully',
+                timezone: timezone
+            });
+        }
+    );
+});
+
+/**
+ * Fetches fresh odds for a specific game during betting operations
+ * This bypasses cache to ensure we have the most current odds for bet placement/selling
+ * @param {string} sport - Sport key (e.g., 'NFL', 'NBA')
+ * @param {string} homeTeam - Home team name
+ * @param {string} awayTeam - Away team name
+ * @returns {Promise<Object|null>} Fresh odds data or null if not found
+ */
+const fetchFreshOddsForGame = async (sport, homeTeam, awayTeam) => {
+    try {
+        console.log(`🔄 Fetching fresh odds for betting operation: ${homeTeam} vs ${awayTeam} (${sport})`);
+        
+        // Get sport configuration
+        const sportConfig = Object.values(SPORT_CONFIG.sports).find(s => s.display === sport);
+        if (!sportConfig) {
+            console.log(`❌ Sport configuration not found for: ${sport}`);
+            return null;
+        }
+
+        const apiKeys = config.server.odds.apiKeys;
+        console.log(`🔑 Using ${apiKeys.length} API keys for fresh odds verification`);
+        
+        let data = null;
+        let lastError = null;
+        
+        // Try each API key until we get data
+        for (let i = 0; i < apiKeys.length; i++) {
+            const apiKey = apiKeys[i];
+            if (!apiKey) continue;
+
+            try {
+                const now = new Date();
+                const commenceTimeFrom = now.toISOString().split('.')[0] + 'Z';
+                const url = `https://api.the-odds-api.com/v4/sports/${sportConfig.key}/odds/?apiKey=${apiKey}&regions=us&markets=h2h&oddsFormat=american&commenceTimeFrom=${commenceTimeFrom}`;
+                
+                console.log(`🔄 Trying API key ${i + 1}/${apiKeys.length} for fresh odds verification`);
+                
+                const response = await fetch(url);
+                if (response.ok) {
+                    const allGames = await response.json();
+                    console.log(`✅ Retrieved ${allGames.length} games for fresh verification`);
+                    
+                    // Find the specific game by team names
+                    const targetGame = allGames.find(game => 
+                        (game.home_team === homeTeam && game.away_team === awayTeam) ||
+                        (game.home_team === awayTeam && game.away_team === homeTeam) ||
+                        (game.home_team.includes(homeTeam) || homeTeam.includes(game.home_team)) &&
+                        (game.away_team.includes(awayTeam) || awayTeam.includes(game.away_team))
+                    );
+                    
+                    if (targetGame) {
+                        console.log(`✅ Found fresh odds for ${targetGame.home_team} vs ${targetGame.away_team}`);
+                        
+                        // Update cache with fresh data for this specific game
+                        const odds = targetGame.bookmakers?.[0]?.markets?.[0]?.outcomes || [];
+                        
+                        // Delete old cache entry for this game
+                        await new Promise((resolve, reject) => {
+                            db.run(
+                                'DELETE FROM odds_cache WHERE sport = ? AND (home_team = ? OR away_team = ?) AND (home_team = ? OR away_team = ?)',
+                                [sport, homeTeam, homeTeam, awayTeam, awayTeam],
+                                (err) => {
+                                    if (err) reject(err);
+                                    else resolve();
+                                }
+                            );
+                        });
+                        
+                        // Insert fresh data
+                        await new Promise((resolve, reject) => {
+                            db.run(
+                                `INSERT INTO odds_cache (sport, game, home_team, away_team, commence_time, odds, created_at) 
+                                 VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'utc'))`,
+                                [
+                                    sport,
+                                    `${targetGame.home_team} vs ${targetGame.away_team}`,
+                                    targetGame.home_team,
+                                    targetGame.away_team,
+                                    targetGame.commence_time,
+                                    JSON.stringify(odds)
+                                ],
+                                (err) => {
+                                    if (err) reject(err);
+                                    else resolve();
+                                }
+                            );
+                        });
+                        
+                        console.log(`✅ Updated cache with fresh odds for betting operation`);
+                        return {
+                            game: targetGame,
+                            odds: odds
+                        };
+                    } else {
+                        console.log(`⚠️  Game not found in fresh API data: ${homeTeam} vs ${awayTeam}`);
+                    }
+                    
+                    break; // Success with API call, even if game not found
+                } else {
+                    const errorText = await response.text();
+                    console.log(`❌ API key ${i + 1} failed: ${response.status} - ${errorText}`);
+                    lastError = new Error(`API key ${i + 1} failed: ${response.status}`);
+                }
+            } catch (error) {
+                console.log(`❌ API key ${i + 1} error:`, error.message);
+                lastError = error;
+            }
+        }
+        
+        if (!data) {
+            console.log(`⚠️  Could not fetch fresh odds (all API keys failed), using cached data for ${homeTeam} vs ${awayTeam}`);
+        }
+        
+        return null;
+    } catch (error) {
+        console.error(`❌ Error fetching fresh odds for ${homeTeam} vs ${awayTeam}:`, error);
+        return null;
+    }
+};
+
+/**
+ * Verifies and updates odds for a specific game during betting operations
+ * @param {string} sport - Sport name
+ * @param {string} game - Game description (e.g., "Team A vs Team B")
+ * @returns {Promise<Object|null>} Current odds data or null
+ */
+const verifyOddsForBetting = async (sport, game) => {
+    try {
+        // Parse team names from game string
+        const teams = game.split(' vs ');
+        if (teams.length !== 2) {
+            console.log(`⚠️  Could not parse team names from: ${game}`);
+            return null;
+        }
+        
+        const [team1, team2] = teams.map(t => t.trim());
+        
+        // Try to fetch fresh odds
+        const freshOdds = await fetchFreshOddsForGame(sport, team1, team2);
+        if (freshOdds) {
+            return freshOdds.odds;
+        }
+        
+        // Fallback to cached data if fresh fetch fails
+        console.log(`📦 Using cached odds as fallback for ${game}`);
+        const cachedOdds = await new Promise((resolve, reject) => {
+            db.get(
+                "SELECT odds FROM odds_cache WHERE game = ? AND sport = ? ORDER BY created_at DESC LIMIT 1",
+                [game, sport],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+        
+        if (cachedOdds && cachedOdds.odds) {
+            return JSON.parse(cachedOdds.odds);
+        }
+        
+        return null;
+    } catch (error) {
+        console.error(`Error verifying odds for betting:`, error);
+        return null;
+    }
+};
+
+/**
  * Place Bet Endpoint
- * Handles bet placement and balance updates
+ * Handles bet placement and balance updates with fresh odds verification
  */
 app.post('/api/bets', authenticateToken, async (req, res) => {
     const { game, team, amount, odds, sport, game_date } = req.body;
@@ -1017,6 +1182,43 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
             sport,
             game_date
         });
+
+        // 🔄 VERIFY CURRENT ODDS FOR BETTING OPERATION
+        console.log(`🔍 Verifying current odds for bet placement...`);
+        const currentOddsData = await verifyOddsForBetting(sport, game);
+        
+        if (currentOddsData && currentOddsData.length > 0) {
+            // Find the odds for the selected team
+            const teamOdds = currentOddsData.find(odd => 
+                odd.name === team || 
+                (team && team.includes(odd.name)) || 
+                (odd.name && odd.name.includes(team))
+            );
+            
+            if (teamOdds) {
+                const oddsVerified = teamOdds.price;
+                const oddsDifference = Math.abs(odds - oddsVerified);
+                
+                console.log(`📊 Odds verification: Original ${odds}, Current ${oddsVerified}, Difference: ${oddsDifference}`);
+                
+                // If odds have changed significantly (more than 10 points), reject the bet
+                if (oddsDifference > 10) {
+                    console.log(`❌ Odds have changed significantly! Rejecting bet.`);
+                    return res.status(400).json({ 
+                        message: 'Odds have changed significantly',
+                        originalOdds: odds,
+                        currentOdds: oddsVerified,
+                        difference: oddsDifference
+                    });
+                } else {
+                    console.log(`✅ Odds verification passed (difference: ${oddsDifference} points)`);
+                }
+            } else {
+                console.log(`⚠️  Could not find odds for team ${team}, proceeding with original odds`);
+            }
+        } else {
+            console.log(`⚠️  Could not verify current odds, proceeding with original odds`);
+        }
 
         // Start a transaction
         await db.run('BEGIN TRANSACTION');
@@ -1039,7 +1241,7 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
 
         // Place bet and update balance
         await db.run(
-            'INSERT INTO bets (user_id, game, team, amount, odds, sport, game_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO bets (user_id, game, team, amount, odds, sport, game_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime(\'now\', \'utc\'))',
             [userId, game, team, roundedAmount, odds, sport, game_date]
         );
 
@@ -1072,67 +1274,8 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
 });
 
 /**
- * Resolve Bet Endpoint
- * Updates bet outcomes and user balances
- */
-app.post('/resolveBet', authenticateToken, [
-    check('betId').isInt(),
-    check('outcome').isIn(['won', 'lost'])
-], (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-
-    const { betId, outcome } = req.body;
-
-    db.get(
-        "SELECT * FROM bets WHERE id = ? AND status = 'pending'",
-        [betId],
-        (err, bet) => {
-            if (err) {
-                return res.status(500).json({ error: "Server error" });
-            }
-            if (!bet) {
-                return res.status(404).json({ error: "Bet not found or already resolved" });
-            }
-
-            db.run("BEGIN TRANSACTION");
-
-            try {
-                // Update bet status with timestamp
-                db.run(
-                    "UPDATE bets SET status = ?, status_changed_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    [outcome, betId]
-                );
-
-                // If bet is won, update user balance
-                if (outcome === 'won') {
-                    const winnings = bet.odds > 0 ? (bet.amount * bet.odds / 100) : (bet.amount * 100 / Math.abs(bet.odds));
-                    const totalPayout = roundToTwoDecimals(bet.amount + winnings);
-                    db.run(
-                        "UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id = ?",
-                        [totalPayout, bet.user_id]
-                    );
-                }
-
-                db.run("COMMIT");
-
-                res.json({
-                    success: true,
-                    message: `Bet marked as ${outcome}`
-                });
-            } catch (error) {
-                db.run("ROLLBACK");
-                res.status(500).json({ error: "Failed to resolve bet" });
-            }
-        }
-    );
-});
-
-/**
  * Get User Bets Endpoint
- * Retrieves betting history for a specific user
+ * Retrieves betting history for a specific user with timezone-formatted timestamps
  */
 app.get('/bets/:userId', authenticateToken, (req, res) => {
     const { userId } = req.params;
@@ -1156,25 +1299,157 @@ app.get('/bets/:userId', authenticateToken, (req, res) => {
     // Log the user ID for debugging
     console.log('Fetching bets for user:', userId);
 
-    db.all(
-        "SELECT * FROM bets WHERE user_id = ? ORDER BY created_at DESC",
-        [userId],
-        (err, rows) => {
-            if (err) {
-                console.error('Database error:', err);
-                return res.status(500).json({ error: "Failed to fetch betting history" });
-            }
-            console.log('Bets found:', rows ? rows.length : 0);
-            
-            // Ensure consistent status field (some might have 'outcome', some 'status')
-            const processedBets = rows.map(bet => ({
-                ...bet,
-                status: bet.status || bet.outcome || 'pending'
-            }));
-            
-            res.json(processedBets || []);
+    // First get user's timezone preference
+    db.get('SELECT timezone FROM users WHERE id = ?', [userId], (err, userInfo) => {
+        if (err) {
+            console.error('Error fetching user timezone:', err);
+            return res.status(500).json({ error: "Failed to fetch user info" });
         }
-    );
+
+        const userTimezone = userInfo?.timezone || 'America/New_York';
+
+        // Then get all bets for the user
+        db.all(
+            "SELECT * FROM bets WHERE user_id = ? ORDER BY created_at DESC",
+            [userId],
+            (err, rows) => {
+                if (err) {
+                    console.error('Database error:', err);
+                    return res.status(500).json({ error: "Failed to fetch betting history" });
+                }
+                console.log('Bets found:', rows ? rows.length : 0);
+                
+                // Process bets and format timestamps
+                const processedBets = rows.map(bet => {
+                    const formattedCreatedAt = formatTimestampForUser(bet.created_at, userTimezone);
+                    const formattedStatusChangedAt = bet.status_changed_at ? 
+                        formatTimestampForUser(bet.status_changed_at, userTimezone) : null;
+                    const formattedGameDate = bet.game_date ? 
+                        formatTimestampForUser(bet.game_date, userTimezone) : null;
+
+                    return {
+                        ...bet,
+                        status: bet.status || bet.outcome || 'pending',
+                        created_at_formatted: formattedCreatedAt,
+                        status_changed_at_formatted: formattedStatusChangedAt,
+                        game_date_formatted: formattedGameDate,
+                        user_timezone: userTimezone
+                    };
+                });
+                
+                res.json(processedBets || []);
+            }
+        );
+    });
+});
+
+/**
+ * Get Sell Quote Endpoint
+ * Returns the current sell value for a bet without actually selling it
+ */
+app.get('/sell-quote/:betId', authenticateToken, async (req, res) => {
+    const { betId } = req.params;
+    const userId = req.user.userId;
+
+    try {
+        // Get the bet details
+        const bet = await new Promise((resolve, reject) => {
+            db.get(
+                "SELECT * FROM bets WHERE id = ? AND user_id = ? AND status = 'pending'",
+                [betId, userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!bet) {
+            return res.status(404).json({ error: "Bet not found or not eligible for sale" });
+        }
+
+        // Check if the game is still more than 15 minutes away
+        const gameTime = new Date(bet.game_date);
+        const now = new Date();
+        const minutesUntilGame = (gameTime - now) / (1000 * 60);
+
+        if (minutesUntilGame <= 15) {
+            return res.status(400).json({ 
+                error: "Cannot sell bet - game starts in less than 15 minutes or has already started" 
+            });
+        }
+
+        console.log('🔍 Getting sell quote for bet selling...');
+
+        // Get fresh odds for the bet using the same method as betting verification
+        const currentOddsData = await verifyOddsForBetting(bet.sport, bet.game);
+        
+        if (!currentOddsData || currentOddsData.length === 0) {
+            return res.status(400).json({ error: "Unable to get current odds for this game" });
+        }
+
+        console.log('✅ Retrieved fresh odds for sell quote');
+
+        // Find current odds for the team
+        const teamOdds = currentOddsData.find(odd => 
+            odd.name === bet.team || 
+            (bet.team && bet.team.includes(odd.name)) || 
+            (odd.name && odd.name.includes(bet.team))
+        );
+
+        if (!teamOdds) {
+            return res.status(400).json({ error: "Current odds not available for this team" });
+        }
+
+        const currentOdds = teamOdds.price;
+        console.log(`✅ Found fresh odds for team ${bet.team}: ${currentOdds}`);
+
+        // Calculate sell value using real sportsbook cash out logic
+        // Formula: Cash Out Value = (Potential Payout × Current Win Probability) - House Margin
+        
+        // Calculate what the original bet's potential payout would be
+        const originalPayout = bet.odds > 0 ?
+            bet.amount + (bet.amount * bet.odds / 100) :
+            bet.amount + (bet.amount * 100 / Math.abs(bet.odds));
+        
+        // Calculate current win probability from current odds  
+        const currentWinProbability = currentOdds > 0 ? 
+            100 / (currentOdds + 100) : 
+            Math.abs(currentOdds) / (Math.abs(currentOdds) + 100);
+        
+        // Fair cash out value = potential payout * current win probability
+        // This answers: "What is this bet position worth in the current market?"
+        const fairCashOutValue = originalPayout * currentWinProbability;
+        
+        // Use fair market value directly - no artificial house edge
+        let sellValue = fairCashOutValue;
+        
+        // Ensure minimum value (don't go below 5% of original bet)
+        sellValue = Math.max(sellValue, bet.amount * 0.05);
+
+        const profitLoss = sellValue - bet.amount;
+
+        res.json({
+            success: true,
+            bet: {
+                id: bet.id,
+                game: bet.game,
+                team: bet.team,
+                amount: bet.amount,
+                originalOdds: bet.odds
+            },
+            quote: {
+                sellValue: roundToTwoDecimals(sellValue),
+                profitLoss: roundToTwoDecimals(profitLoss),
+                currentOdds: currentOdds,
+                minutesUntilGame: Math.round(minutesUntilGame)
+            }
+        });
+
+    } catch (error) {
+        console.error('Error getting sell quote:', error);
+        res.status(500).json({ error: 'Failed to get sell quote' });
+    }
 });
 
 /**
@@ -1211,40 +1486,77 @@ app.post('/sell-bet/:betId', authenticateToken, async (req, res) => {
                     return res.status(400).json({ error: "Cannot sell bet after game has started" });
                 }
 
-                // Find current odds for the same game and team
+                // 🔄 VERIFY CURRENT ODDS FOR SELLING OPERATION
+                console.log(`🔍 Verifying current odds for bet selling...`);
                 let currentOdds = null;
+                
                 try {
-                    const oddsResult = await new Promise((resolve, reject) => {
-                        // Try to match by exact game name first
-                        db.get(
-                            "SELECT odds, home_team, away_team FROM odds_cache WHERE game = ? ORDER BY created_at DESC LIMIT 1",
-                            [bet.game],
-                            (err, row) => {
-                                if (err) reject(err);
-                                else resolve(row);
-                            }
-                        );
-                    });
-
-                    if (oddsResult && oddsResult.odds) {
-                        const oddsData = JSON.parse(oddsResult.odds);
+                    // First try to get fresh odds
+                    const currentOddsData = await verifyOddsForBetting(bet.sport, bet.game);
+                    
+                    if (currentOddsData && currentOddsData.length > 0) {
+                        console.log(`✅ Retrieved fresh odds for sell operation`);
                         
                         // Try to match by team name
                         if (bet.team && typeof bet.team === 'string') {
-                            currentOdds = oddsData.find(odd => 
+                            const teamOdds = currentOddsData.find(odd => 
                                 odd.name === bet.team || 
                                 (bet.team && bet.team.includes(odd.name)) || 
                                 (odd.name && odd.name.includes(bet.team))
                             );
+                            
+                            if (teamOdds) {
+                                currentOdds = teamOdds.price;
+                                console.log(`✅ Found fresh odds for team ${bet.team}: ${currentOdds}`);
+                            }
                         }
                         
                         // Fallback: match by closest odds value
                         if (!currentOdds) {
-                            currentOdds = oddsData.find(odd => Math.abs(odd.price - bet.odds) < 50) || oddsData[0];
+                            const closestOdds = currentOddsData.find(odd => Math.abs(odd.price - bet.odds) < 50) || currentOddsData[0];
+                            if (closestOdds) {
+                                currentOdds = closestOdds.price;
+                                console.log(`✅ Using closest odds match: ${currentOdds}`);
+                            }
                         }
+                    } else {
+                        console.log(`⚠️  Could not get fresh odds, falling back to cached data`);
                         
-                        if (currentOdds) {
-                            currentOdds = currentOdds.price;
+                        // Fallback to cached data
+                        const oddsResult = await new Promise((resolve, reject) => {
+                            db.get(
+                                "SELECT odds, home_team, away_team FROM odds_cache WHERE game = ? ORDER BY created_at DESC LIMIT 1",
+                                [bet.game],
+                                (err, row) => {
+                                    if (err) reject(err);
+                                    else resolve(row);
+                                }
+                            );
+                        });
+
+                        if (oddsResult && oddsResult.odds) {
+                            const oddsData = JSON.parse(oddsResult.odds);
+                            
+                            // Try to match by team name
+                            if (bet.team && typeof bet.team === 'string') {
+                                const teamOdds = oddsData.find(odd => 
+                                    odd.name === bet.team || 
+                                    (bet.team && bet.team.includes(odd.name)) || 
+                                    (odd.name && odd.name.includes(bet.team))
+                                );
+                                
+                                if (teamOdds) {
+                                    currentOdds = teamOdds.price;
+                                }
+                            }
+                            
+                            // Fallback: match by closest odds value
+                            if (!currentOdds) {
+                                const closestOdds = oddsData.find(odd => Math.abs(odd.price - bet.odds) < 50) || oddsData[0];
+                                if (closestOdds) {
+                                    currentOdds = closestOdds.price;
+                                }
+                            }
                         }
                     }
                 } catch (oddsError) {
@@ -1260,81 +1572,114 @@ app.post('/sell-bet/:betId', authenticateToken, async (req, res) => {
                 console.log(`Bet team: ${bet.team || 'Not specified'}`);
                 console.log(`Original odds: ${bet.odds}, Current odds: ${currentOdds}`);
 
-                if (currentOdds !== null && currentOdds !== bet.odds) {
-                    // Calculate the value change based on odds movement
-                    // Better odds for bettor = higher payout potential = bet worth more
-                    // Worse odds for bettor = lower payout potential = bet worth less
+                // Calculate sell value using real sportsbook cash out logic
+                if (currentOdds !== null) {
+                    // Calculate what the original bet's potential payout would be
+                    const originalPayout = bet.odds > 0 ?
+                        bet.amount + (bet.amount * bet.odds / 100) :
+                        bet.amount + (bet.amount * 100 / Math.abs(bet.odds));
                     
-                    const originalImpliedProb = bet.odds > 0 ? 100 / (bet.odds + 100) : Math.abs(bet.odds) / (Math.abs(bet.odds) + 100);
-                    const currentImpliedProb = currentOdds > 0 ? 100 / (currentOdds + 100) : Math.abs(currentOdds) / (Math.abs(currentOdds) + 100);
+                    // Calculate current win probability from current odds  
+                    const currentWinProbability = currentOdds > 0 ? 
+                        100 / (currentOdds + 100) : 
+                        Math.abs(currentOdds) / (Math.abs(currentOdds) + 100);
                     
-                    console.log(`Original implied probability: ${originalImpliedProb.toFixed(3)}`);
-                    console.log(`Current implied probability: ${currentImpliedProb.toFixed(3)}`);
+                    // Fair cash out value = potential payout * current win probability
+                    // This answers: "What is this bet position worth in the current market?"
+                    const fairCashOutValue = originalPayout * currentWinProbability;
                     
-                    // If current implied probability is LOWER, odds got BETTER (more favorable)
-                    const probChange = originalImpliedProb - currentImpliedProb;
+                    // Use fair market value directly - no artificial house edge
+                    sellValue = fairCashOutValue;
                     
-                    // Calculate profit/loss based on how much the odds moved
-                    // Amplify the change for noticeable effect but keep it reasonable
-                    profitLoss = bet.amount * probChange * 3; 
+                    // Ensure minimum value (don't go below 5% of original bet)
+                    sellValue = Math.max(sellValue, bet.amount * 0.05);
                     
-                    // Cap the profit/loss to reasonable bounds (max ±40% of bet amount)
-                    profitLoss = Math.max(-bet.amount * 0.4, Math.min(bet.amount * 0.4, profitLoss));
-                    sellValue = bet.amount + profitLoss;
+                    console.log(`Original potential payout: $${originalPayout.toFixed(2)}`);
+                    console.log(`Current win probability: ${(currentWinProbability * 100).toFixed(1)}%`);
+                    console.log(`Fair cash out value: $${fairCashOutValue.toFixed(2)}`);
+                    console.log(`Final sell value (fair market value): $${sellValue.toFixed(2)}`);
                     
-                    // Determine odds direction
-                    if (bet.odds > 0 && currentOdds > 0) {
-                        // Both positive: higher number = worse odds
-                        oddsChange = currentOdds > bet.odds ? "Odds worsened (less favorable)" : "Odds improved (more favorable)";
-                    } else if (bet.odds < 0 && currentOdds < 0) {
-                        // Both negative: more negative = better odds
-                        oddsChange = currentOdds < bet.odds ? "Odds improved (more favorable)" : "Odds worsened (less favorable)";
+                    const oddsMovement = currentOdds - bet.odds;
+                    if (Math.abs(oddsMovement) <= 5) {
+                        oddsChange = "No significant odds change";
+                    } else if (oddsMovement > 0) {
+                        oddsChange = `Odds moved against you (+${oddsMovement})`;
                     } else {
-                        // Mixed signs
-                        oddsChange = profitLoss > 0 ? "Odds improved" : "Odds worsened";
+                        oddsChange = `Odds moved in your favor (${oddsMovement})`;
                     }
-                    
-                    console.log(`Calculated profit/loss: ${profitLoss.toFixed(2)}`);
-                    console.log(`Sell value: ${sellValue.toFixed(2)}`);
-                } else if (currentOdds === null) {
-                    oddsChange = "Current odds unavailable - selling at original value";
+                } else {
+                    // No current odds available - return original amount
+                    sellValue = bet.amount;
+                    oddsChange = "Current odds unavailable - returning original amount";
+                    console.log(`Current odds unavailable - returning original amount: $${sellValue}`);
                 }
+                
+                profitLoss = sellValue - bet.amount;
+
+                console.log(`Final sell value: ${sellValue.toFixed(2)}`);
+                console.log(`Final profit/loss: ${profitLoss.toFixed(2)}`);
 
                 // Round to 2 decimal places using helper function
                 sellValue = roundToTwoDecimals(sellValue);
                 profitLoss = roundToTwoDecimals(profitLoss);
 
                 // Start a transaction to update user balance and update bet status
-                db.run("BEGIN TRANSACTION");
-
                 try {
-                    // Update user's balance with sell value
+                    await new Promise((resolve, reject) => {
+                        db.run("BEGIN TRANSACTION", (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        });
+                    });
+
+                    // Update user's balance
                     await new Promise((resolve, reject) => {
                         db.run(
                             "UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id = ?",
                             [sellValue, userId],
                             (err) => {
-                                if (err) reject(err);
-                                resolve();
+                                if (err) {
+                                    console.error('Error updating user balance:', err);
+                                    reject(err);
+                                } else {
+                                    console.log(`✅ Updated user ${userId} balance by $${sellValue}`);
+                                    resolve();
+                                }
                             }
                         );
                     });
 
-                    // Mark bet as sold with timestamp
+                    // Mark bet as sold with timestamp and resolution details
                     await new Promise((resolve, reject) => {
                         db.run(
-                            "UPDATE bets SET status = 'sold', status_changed_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
-                            [betId, userId],
+                            "UPDATE bets SET status = 'sold', status_changed_at = datetime('now', 'utc'), final_amount = ?, profit_loss = ? WHERE id = ? AND user_id = ?",
+                            [sellValue, profitLoss, betId, userId],
                             (err) => {
-                                if (err) reject(err);
-                                resolve();
+                                if (err) {
+                                    console.error('Error updating bet status:', err);
+                                    reject(err);
+                                } else {
+                                    console.log(`✅ Updated bet ${betId} status to sold`);
+                                    resolve();
+                                }
                             }
                         );
                     });
 
                     // Commit the transaction
-                    db.run("COMMIT");
+                    await new Promise((resolve, reject) => {
+                        db.run("COMMIT", (err) => {
+                            if (err) {
+                                console.error('Error committing transaction:', err);
+                                reject(err);
+                            } else {
+                                console.log('✅ Transaction committed successfully');
+                                resolve();
+                            }
+                        });
+                    });
                     
+                    console.log(`✅ Bet ${betId} sold successfully for $${sellValue}`);
                     res.json({ 
                         success: true,
                         message: "Bet sold successfully",
@@ -1347,9 +1692,23 @@ app.post('/sell-bet/:betId', authenticateToken, async (req, res) => {
                     });
                 } catch (error) {
                     // Rollback on error
-                    db.run("ROLLBACK");
                     console.error('Transaction error:', error);
-                    res.status(500).json({ error: "Failed to sell bet" });
+                    try {
+                        await new Promise((resolve, reject) => {
+                            db.run("ROLLBACK", (err) => {
+                                if (err) {
+                                    console.error('Error rolling back transaction:', err);
+                                    reject(err);
+                                } else {
+                                    console.log('🔄 Transaction rolled back');
+                                    resolve();
+                                }
+                            });
+                        });
+                    } catch (rollbackError) {
+                        console.error('Failed to rollback transaction:', rollbackError);
+                    }
+                    res.status(500).json({ error: "Failed to sell bet: " + error.message });
                 }
             }
         );
@@ -1377,10 +1736,333 @@ app.get('/leaderboard', authenticateToken, (req, res) => {
     );
 });
 
+/**
+ * Auto-resolve completed games endpoint
+ * Checks for games that have finished and automatically resolves pending bets
+ */
+app.post('/api/resolve-completed-games', authenticateToken, async (req, res) => {
+    try {
+        console.log('🔍 Checking for completed games to auto-resolve...');
+        
+        // Find all pending bets for games that have already started (past commence_time)
+        const completedGameBets = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT DISTINCT game, sport, game_date 
+                FROM bets 
+                WHERE status = 'pending' 
+                AND datetime(game_date) < datetime('now', '-2 hours')
+                ORDER BY game_date DESC
+            `, [], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+
+        console.log(`📊 Found ${completedGameBets.length} games that may be completed`);
+        
+        let resolvedGames = 0;
+        const gameResults = [];
+
+        for (const gameInfo of completedGameBets) {
+            const timeSinceGame = (new Date() - new Date(gameInfo.game_date)) / (1000 * 60 * 60); // hours
+            
+            // Only auto-resolve games that finished more than 2 hours ago
+            if (timeSinceGame > 2) {
+                console.log(`⚽ Processing completed game: ${gameInfo.game} (${timeSinceGame.toFixed(1)}h ago)`);
+                
+                // Get all pending bets for this game
+                const gameBets = await new Promise((resolve, reject) => {
+                    db.all(`
+                        SELECT id, user_id, team, amount, odds 
+                        FROM bets 
+                        WHERE game = ? AND status = 'pending'
+                    `, [gameInfo.game], (err, rows) => {
+                        if (err) reject(err);
+                        else resolve(rows);
+                    });
+                });
+
+                if (gameBets.length > 0) {
+                    // Fetch actual game results from the API
+                    let gameWinner = null;
+                    let actualScore = null;
+                    
+                    try {
+                        console.log(`🔍 Fetching actual results for completed game: ${gameInfo.game}`);
+                        
+                        // Parse team names from the game string
+                        const gameMatch = gameInfo.game.match(/^(.+?) vs (.+?)$/);
+                        if (!gameMatch) {
+                            throw new Error(`Cannot parse team names from game: ${gameInfo.game}`);
+                        }
+                        
+                        const [, homeTeam, awayTeam] = gameMatch;
+                        console.log(`🏟️  Looking for results: ${homeTeam} vs ${awayTeam}`);
+                        
+                        // Determine sport from game info
+                        const sport = gameInfo.sport;
+                        const sportKey = SPORT_CONFIG.sports[sport]?.key;
+                        
+                        if (!sportKey) {
+                            throw new Error(`Unknown sport: ${sport}`);
+                        }
+                        
+                        // Fetch completed games from the API with scores
+                        let gameResult = null;
+                        for (let i = 0; i < apiKeys.length; i++) {
+                            try {
+                                console.log(`🔄 Trying API key ${i + 1}/${apiKeys.length} for completed game results`);
+                                
+                                // Fetch completed games with scores
+                                const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${apiKeys[i]}&daysFrom=3&daysTo=1`;
+                                const response = await fetch(url);
+                                
+                                if (!response.ok) {
+                                    console.log(`❌ API key ${i + 1} failed with status ${response.status}`);
+                                    if (i === apiKeys.length - 1) {
+                                        throw new Error(`All API keys failed. Last status: ${response.status}`);
+                                    }
+                                    continue;
+                                }
+                                
+                                const completedGames = await response.json();
+                                console.log(`✅ Retrieved ${completedGames.length} completed games from API`);
+                                
+                                // Find the matching game
+                                gameResult = completedGames.find(game => {
+                                    const gameHomeTeam = game.home_team;
+                                    const gameAwayTeam = game.away_team;
+                                    
+                                    // Try exact match first
+                                    if ((gameHomeTeam === homeTeam && gameAwayTeam === awayTeam) ||
+                                        (gameHomeTeam === awayTeam && gameAwayTeam === homeTeam)) {
+                                        return true;
+                                    }
+                                    
+                                    // Try partial match (in case of slight name differences)
+                                    const homeMatch = gameHomeTeam.toLowerCase().includes(homeTeam.toLowerCase()) ||
+                                                     homeTeam.toLowerCase().includes(gameHomeTeam.toLowerCase());
+                                    const awayMatch = gameAwayTeam.toLowerCase().includes(awayTeam.toLowerCase()) ||
+                                                     awayTeam.toLowerCase().includes(gameAwayTeam.toLowerCase());
+                                                     
+                                    return (homeMatch && awayMatch);
+                                });
+                                
+                                if (gameResult) {
+                                    console.log(`🎯 Found matching completed game:`, {
+                                        game: `${gameResult.home_team} vs ${gameResult.away_team}`,
+                                        completed: gameResult.completed,
+                                        scores: gameResult.scores
+                                    });
+                                    break;
+                                }
+                                
+                                break; // Exit API key loop on successful response, even if no game found
+                                
+                            } catch (apiError) {
+                                console.log(`❌ API key ${i + 1} error:`, apiError.message);
+                                if (i === apiKeys.length - 1) {
+                                    throw apiError;
+                                }
+                            }
+                        }
+                        
+                        // Determine winner from actual game results
+                        if (gameResult && gameResult.completed && gameResult.scores && gameResult.scores.length >= 2) {
+                            const homeScore = gameResult.scores.find(score => score.name === gameResult.home_team);
+                            const awayScore = gameResult.scores.find(score => score.name === gameResult.away_team);
+                            
+                            if (homeScore && awayScore && homeScore.score !== null && awayScore.score !== null) {
+                                const actualWinner = homeScore.score > awayScore.score ? gameResult.home_team : gameResult.away_team;
+                                actualScore = `${gameResult.home_team} ${homeScore.score} - ${awayScore.score} ${gameResult.away_team}`;
+                                
+                                // Map the API result winner to our betting team names
+                                if (actualWinner === gameResult.home_team) {
+                                    gameWinner = homeTeam;
+                                } else {
+                                    gameWinner = awayTeam;
+                                }
+                                
+                                console.log(`🏆 ACTUAL GAME RESULT: ${actualScore} - Winner: ${gameWinner}`);
+                            } else {
+                                throw new Error('Game completed but scores not available');
+                            }
+                        } else {
+                            throw new Error('Game not found in completed games or not yet completed');
+                        }
+                        
+                    } catch (error) {
+                        console.error('❌ Error fetching actual game results:', error.message);
+                        console.log('⏭️  Skipping game resolution - cannot determine actual winner without API results');
+                        // Skip this game if we can't get actual results
+                        continue;
+                    }
+                    
+                    // Split bets into winners and losers based on actual/determined winner
+                    const winners = gameBets.filter(bet => bet.team === gameWinner);
+                    const losers = gameBets.filter(bet => bet.team !== gameWinner);
+
+                    const resultSource = actualScore ? `ACTUAL RESULT: ${actualScore}` : 'Simulated Result';
+                    console.log(`🎯 Resolving ${winners.length} winners and ${losers.length} losers for ${gameInfo.game} (${resultSource} - Winner: ${gameWinner})`);
+
+                    // Process winners
+                    for (const bet of winners) {
+                        const winnings = bet.odds > 0 ? (bet.amount * bet.odds / 100) : (bet.amount * 100 / Math.abs(bet.odds));
+                        const finalAmount = roundToTwoDecimals(bet.amount + winnings);
+                        const profitLoss = roundToTwoDecimals(winnings);
+
+                        await new Promise((resolve, reject) => {
+                            db.run('BEGIN TRANSACTION', (err) => {
+                                if (err) reject(err);
+                                else resolve();
+                            });
+                        });
+
+                        try {
+                            // Update user balance
+                            await new Promise((resolve, reject) => {
+                                db.run(
+                                    "UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id = ?",
+                                    [finalAmount, bet.user_id],
+                                    (err) => {
+                                        if (err) reject(err);
+                                        else resolve();
+                                    }
+                                );
+                            });
+
+                            // Mark bet as won
+                            await new Promise((resolve, reject) => {
+                                db.run(
+                                    "UPDATE bets SET status = 'won', status_changed_at = datetime('now', 'utc'), final_amount = ?, profit_loss = ? WHERE id = ?",
+                                    [finalAmount, profitLoss, bet.id],
+                                    (err) => {
+                                        if (err) reject(err);
+                                        else resolve();
+                                    }
+                                );
+                            });
+
+                            await new Promise((resolve, reject) => {
+                                db.run('COMMIT', (err) => {
+                                    if (err) reject(err);
+                                    else resolve();
+                                });
+                            });
+
+                        } catch (error) {
+                            await new Promise((resolve) => {
+                                db.run('ROLLBACK', () => resolve());
+                            });
+                            console.error(`Error processing winning bet ${bet.id}:`, error);
+                        }
+                    }
+
+                    // Process losers
+                    for (const bet of losers) {
+                        const finalAmount = 0;
+                        const profitLoss = roundToTwoDecimals(-bet.amount);
+
+                        await new Promise((resolve, reject) => {
+                            db.run(
+                                "UPDATE bets SET status = 'lost', status_changed_at = datetime('now', 'utc'), final_amount = ?, profit_loss = ? WHERE id = ?",
+                                [finalAmount, profitLoss, bet.id],
+                                (err) => {
+                                    if (err) reject(err);
+                                    else resolve();
+                                }
+                            );
+                        });
+                    }
+
+                    resolvedGames++;
+                    gameResults.push({
+                        game: gameInfo.game,
+                        totalBets: gameBets.length,
+                        winners: winners.length,
+                        losers: losers.length,
+                        timeSinceGame: `${timeSinceGame.toFixed(1)}h ago`
+                    });
+                }
+            }
+        }
+
+        console.log(`✅ Auto-resolved ${resolvedGames} completed games`);
+
+        res.json({
+            success: true,
+            message: `Resolved ${resolvedGames} completed games`,
+            resolvedGames,
+            gameResults
+        });
+
+    } catch (error) {
+        console.error('Error auto-resolving completed games:', error);
+        res.status(500).json({ error: 'Failed to resolve completed games' });
+    }
+});
+
+/**
+ * Formats a UTC timestamp to user's local timezone
+ * @param {string} utcTimestamp - UTC timestamp from database
+ * @param {string} timezone - User's timezone (e.g., 'America/New_York')
+ * @returns {Object} Formatted date information
+ */
+const formatTimestampForUser = (utcTimestamp, timezone = 'America/New_York') => {
+    if (!utcTimestamp) return null;
+    
+    try {
+        // Ensure the timestamp is treated as UTC
+        let date;
+        if (utcTimestamp.endsWith('Z') || utcTimestamp.includes('+')) {
+            // Already has timezone info
+            date = new Date(utcTimestamp);
+        } else {
+            // Assume it's UTC and add Z suffix
+            date = new Date(utcTimestamp + 'Z');
+        }
+        
+        // Check if date is valid
+        if (isNaN(date.getTime())) {
+            console.error('Invalid date:', utcTimestamp);
+            return { utc: utcTimestamp, local: 'Invalid Date', date: 'Invalid Date', time: 'Invalid Time', timezone };
+        }
+        
+        const options = {
+            timeZone: timezone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        };
+        
+        const formatter = new Intl.DateTimeFormat('en-US', options);
+        const parts = formatter.formatToParts(date);
+        
+        const formatted = parts.reduce((acc, part) => {
+            acc[part.type] = part.value;
+            return acc;
+        }, {});
+        
+        return {
+            utc: utcTimestamp,
+            local: `${formatted.year}-${formatted.month}-${formatted.day} ${formatted.hour}:${formatted.minute}:${formatted.second}`,
+            date: `${formatted.month}/${formatted.day}/${formatted.year}`,
+            time: `${formatted.hour}:${formatted.minute}`, // Only hours and minutes for display
+            timezone: timezone,
+            fullTime: `${formatted.hour}:${formatted.minute}:${formatted.second}` // Full time with seconds if needed
+        };
+    } catch (error) {
+        console.error('Error formatting timestamp:', error);
+        return { utc: utcTimestamp, local: utcTimestamp, date: 'Invalid Date', time: 'Invalid Time', timezone };
+    }
+};
+
 // Start the server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log('\nTest user credentials:');
-    console.log('Username: testuser');
-    console.log('Password: test123');
+    console.log('✅ Fantasy Sports Betting API ready');
 });

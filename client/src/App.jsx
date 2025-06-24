@@ -9,9 +9,10 @@
 import { useState, useEffect } from "react"; // React hooks for state and side effects
 import Register from "./components/Register"; // User registration component
 import Login from "./components/Login";       // User login component
-import BettingHistory from "./components/BettingHistory"; // User betting history component
+import BettingPanel from "./components/BettingPanel"; // User betting panel with active bets and history
 import Leaderboard from './components/Leaderboard'; // Global leaderboard component
-import { fetchOdds, placeBet as placeBetApi } from "./api"; // API communication functions
+import Notification from './components/Notification'; // Notification component
+import { fetchOdds, placeBet as placeBetApi, resolveCompletedGames, updateUserTimezone } from "./api"; // API communication functions
 import "./App.css"; // Component styles
 
 function App() {
@@ -22,7 +23,7 @@ function App() {
   // Betting interface state
   const [odds, setOdds] = useState([]); // Available betting odds
   const [selectedSport, setSelectedSport] = useState('all'); // Currently selected sport filter
-  const [selectedAmount, setSelectedAmount] = useState(5); // Selected bet amount
+  const [selectedAmount, setSelectedAmount] = useState(null); // Selected bet amount
   const [customAmount, setCustomAmount] = useState(''); // Custom bet amount input
   const [selectedTeam, setSelectedTeam] = useState(null); // Selected team for betting
   const [expandedBets, setExpandedBets] = useState({}); // Track which bet options are expanded
@@ -31,13 +32,17 @@ function App() {
   const [error, setError] = useState(null); // Error messages
   const [isLoading, setIsLoading] = useState(false); // Loading state
   const [showLeaderboard, setShowLeaderboard] = useState(false); // Toggle leaderboard view
+  const [notification, setNotification] = useState({ visible: false, message: '', type: 'info' }); // Notification state
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1); // Current page for odds
-  const [pagination, setPagination] = useState(null); // Pagination metadata
+  const [pagination, setPagination] = useState({}); // Pagination metadata
 
   // Refresh triggers
   const [betsRefreshTrigger, setBetsRefreshTrigger] = useState(0); // Force betting history refresh
+  const [gamesRefreshTrigger, setGamesRefreshTrigger] = useState(0); // Force games refresh
+  const [isRefreshingGames, setIsRefreshingGames] = useState(false); // Games refresh loading state
+  const [lastGamesRefresh, setLastGamesRefresh] = useState(null); // Track last games refresh time
 
   // Constants
   const SPORTS = [
@@ -49,6 +54,22 @@ function App() {
   ];
 
   const BET_AMOUNTS = [5, 25, 50, 100];
+
+  /**
+   * Shows a notification message
+   * @param {string} message - The notification message
+   * @param {string} type - The notification type ('success', 'error', 'warning', 'info')
+   */
+  const showNotification = (message, type = 'info') => {
+    setNotification({ visible: true, message, type });
+  };
+
+  /**
+   * Closes the notification
+   */
+  const closeNotification = () => {
+    setNotification({ visible: false, message: '', type: 'info' });
+  };
 
   /**
    * Effect hook to fetch odds when user logs in or sport changes
@@ -63,6 +84,9 @@ function App() {
         setOdds(response.games || []);
         setPagination(response.pagination);
         setError(null);
+        
+        // Auto-refresh betting history when user returns to main screen
+        setBetsRefreshTrigger(prev => prev + 1);
       } catch (error) {
         console.error('Error fetching odds:', error);
         setError('Failed to fetch odds');
@@ -117,6 +141,7 @@ function App() {
     console.log('Login success, user data:', response.user);
     localStorage.setItem('token', response.token);
     setUser(response.user);
+    // Betting history refresh now happens in useEffect when user is set
   };
 
   /**
@@ -137,12 +162,12 @@ function App() {
    */
   const handlePlaceBet = async (game, amount, selectedTeam, selectedOdds) => {
     if (!user) {
-      alert("Please log in to place bets");
+      showNotification("Please log in to place bets", "warning");
       return;
     }
 
     if (user.balance < amount) {
-      alert("Insufficient balance");
+      showNotification("Insufficient balance", "error");
       return;
     }
 
@@ -172,10 +197,25 @@ function App() {
         setCustomAmount('');
         // Trigger betting history refresh
         setBetsRefreshTrigger(prev => prev + 1);
-        alert("Bet placed successfully!");
+        showNotification("Bet placed successfully!", "success");
       }
     } catch (error) {
-      alert(error.message || "Failed to place bet");
+              // Handle odds change errors specifically
+        if (error.message && error.message.includes('Odds have changed significantly')) {
+          const errorData = error.details || {};
+          const message = `⚠️ Odds have changed! Original: ${errorData.originalOdds || 'N/A'}, Current: ${errorData.currentOdds || 'N/A'}. Please refresh and try again.`;
+          showNotification(message, "warning");
+        // Refresh odds data
+        try {
+          const response = await fetchOdds(1, selectedSport);
+          setOdds(response.games || []);
+          setPagination(response.pagination);
+        } catch (refreshError) {
+          console.error('Error refreshing odds:', refreshError);
+        }
+              } else {
+          showNotification(error.message || "Failed to place bet", "error");
+        }
     }
   };
 
@@ -216,7 +256,99 @@ function App() {
       setBetsRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error('Error fetching user data:', error);
-      alert('Failed to update user data. Please refresh the page.');
+      showNotification('Failed to update user data. Please refresh the page.', 'error');
+    }
+  };
+
+  /**
+   * Manually refreshes games data with minimal API usage
+   * Only refreshes if last refresh was more than 5 minutes ago
+   */
+  const handleRefreshGames = async () => {
+    const now = Date.now();
+    const fiveMinutesAgo = now - (5 * 60 * 1000);
+    
+    // Prevent too frequent refreshes
+    if (lastGamesRefresh && lastGamesRefresh > fiveMinutesAgo) {
+      const minutesLeft = Math.ceil((lastGamesRefresh + (5 * 60 * 1000) - now) / (60 * 1000));
+      showNotification(`Please wait ${minutesLeft} more minute(s) before refreshing games to conserve API calls.`, 'warning');
+      return;
+    }
+
+    setIsRefreshingGames(true);
+    try {
+      console.log('🔄 Manually refreshing games data...');
+      const response = await fetchOdds(1, selectedSport, true); // Force refresh
+      setOdds(response.games || []);
+      setPagination(response.pagination);
+      setCurrentPage(1);
+      setLastGamesRefresh(now);
+      setError(null);
+      console.log('✅ Games data refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing games:', error);
+      setError('Failed to refresh games data');
+    } finally {
+      setIsRefreshingGames(false);
+    }
+  };
+
+  /**
+   * Refreshes betting history and resolves any completed games
+   */
+  const handleRefreshBets = async () => {
+    try {
+      // First resolve any completed games
+      console.log('🎯 Auto-resolving completed games...');
+      const result = await resolveCompletedGames();
+      
+      if (result.success && result.resolvedGames > 0) {
+        // Update user balance after resolving games
+        const response = await fetch('http://localhost:5000/user', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include'
+        });
+
+        if (response.ok) {
+          const userData = await response.json();
+          setUser(userData);
+        }
+
+        // Show resolution results
+        const message = `✅ ${result.resolvedGames} completed games auto-resolved!\n\n` +
+                       (result.gameResults.length > 0 ? 
+                         `Details:\n${result.gameResults.map(game => 
+                           `• ${game.game}: ${game.winners}W / ${game.losers}L`
+                         ).join('\n')}` : '');
+        
+        showNotification(message, 'success');
+      }
+    } catch (error) {
+      console.error('Error auto-resolving games:', error);
+      // Continue with refresh even if auto-resolve fails
+    }
+    
+    // Trigger betting history refresh
+    setBetsRefreshTrigger(prev => prev + 1);
+  };
+
+  /**
+   * Handles timezone change
+   * @param {string} timezone - Selected timezone
+   */
+  const handleTimezoneChange = async (timezone) => {
+    try {
+      await updateUserTimezone(timezone);
+      setUser(prev => ({ ...prev, timezone }));
+      // Refresh betting history to show updated timestamps
+      setBetsRefreshTrigger(prev => prev + 1);
+      showNotification('Timezone updated successfully!', 'success');
+    } catch (error) {
+      console.error('Error updating timezone:', error);
+      showNotification('Failed to update timezone: ' + error.message, 'error');
     }
   };
 
@@ -247,6 +379,28 @@ function App() {
           <div className="user-info">
             <span>Welcome, {user.username}!</span>
             <span>Balance: ${user.balance}</span>
+            <div className="timezone-selector">
+              <label htmlFor="timezone">Timezone: </label>
+              <select 
+                id="timezone" 
+                value={user.timezone || 'America/New_York'} 
+                onChange={(e) => handleTimezoneChange(e.target.value)}
+              >
+                <option value="America/New_York">Eastern (New York)</option>
+                <option value="America/Chicago">Central (Chicago)</option>
+                <option value="America/Denver">Mountain (Denver)</option>
+                <option value="America/Los_Angeles">Pacific (Los Angeles)</option>
+                <option value="America/Phoenix">Arizona (Phoenix)</option>
+                <option value="America/Anchorage">Alaska (Anchorage)</option>
+                <option value="Pacific/Honolulu">Hawaii (Honolulu)</option>
+                <option value="Europe/London">London</option>
+                <option value="Europe/Paris">Paris</option>
+                <option value="Europe/Berlin">Berlin</option>
+                <option value="Asia/Tokyo">Tokyo</option>
+                <option value="Asia/Shanghai">Shanghai</option>
+                <option value="UTC">UTC</option>
+              </select>
+            </div>
             <button onClick={handleLogout}>Logout</button>
             <button onClick={() => setShowLeaderboard(!showLeaderboard)}>
               {showLeaderboard ? 'Show Games' : 'Show Leaderboard'}
@@ -272,6 +426,21 @@ function App() {
                     ))}
                   </select>
                 </div>
+                
+                <div className="refresh-controls">
+                  <button 
+                    className="refresh-button games-refresh"
+                    onClick={handleRefreshGames}
+                    disabled={isRefreshingGames}
+                  >
+                    {isRefreshingGames ? '🔄 Refreshing...' : '🔄 Refresh Games'}
+                  </button>
+                  {lastGamesRefresh && (
+                    <span className="last-refresh">
+                      Last refreshed: {new Date(lastGamesRefresh).toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Games listing */}
@@ -288,67 +457,105 @@ function App() {
                       <div className="game-header">
                         <span className="sport-tag">{game.sport}</span>
                         <span className="game-time">
-                          {new Date(game.commenceTime).toLocaleString()} 
-                          ({new Date(game.commenceTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})
+                          {(() => {
+                            const gameDate = new Date(game.commenceTime);
+                            const userTimezone = user?.timezone || 'America/New_York';
+                            
+                            const dateOptions = {
+                              timeZone: userTimezone,
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit'
+                            };
+                            
+                            const timeOptions = {
+                              timeZone: userTimezone,
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true
+                            };
+                            
+                            const formattedDate = gameDate.toLocaleDateString('en-US', dateOptions);
+                            const formattedTime = gameDate.toLocaleTimeString('en-US', timeOptions);
+                            
+                            return `${formattedDate} at ${formattedTime} (${userTimezone.split('/')[1] || userTimezone})`;
+                          })()}
                         </span>
                       </div>
                       <h3>{game.homeTeam} vs {game.awayTeam}</h3>
-                      <div className="odds-display">
-                        {game.odds && game.odds.length > 0 && (
-                          <div className="odds-info">
-                            <p>{game.homeTeam}: {game.odds[0]?.price > 0 ? '+' : ''}{game.odds[0]?.price}</p>
-                            <p>{game.awayTeam}: {game.odds[1]?.price > 0 ? '+' : ''}{game.odds[1]?.price}</p>
-                          </div>
-                        )}
-                        <button 
-                          className="bet-button"
-                          onClick={() => setExpandedBets(prev => ({
-                            ...prev,
-                            [game.id]: !prev[game.id]
-                          }))}
-                        >
-                          {expandedBets[game.id] ? 'Cancel' : 'Place Bet'}
-                        </button>
-                        {expandedBets[game.id] && (
-                          <div className="betting-options">
-                            <div className="team-selection">
+                      
+                      {!expandedBets[game.id] ? (
+                        // Show odds and bet buttons for team selection
+                        <div className="odds-display">
+                          {game.odds && game.odds.length > 0 && (
+                            <div className="team-betting-options">
                               <button 
-                                className={`team-button ${selectedTeam === game.homeTeam ? 'selected' : ''}`}
-                                onClick={() => setSelectedTeam(game.homeTeam)}
-                              >
-                                {game.homeTeam}
-                              </button>
-                              <button 
-                                className={`team-button ${selectedTeam === game.awayTeam ? 'selected' : ''}`}
-                                onClick={() => setSelectedTeam(game.awayTeam)}
-                              >
-                                {game.awayTeam}
-                              </button>
-                            </div>
-                            <div className="bet-amounts">
-                              {BET_AMOUNTS.map(amount => (
-                                <button
-                                  key={amount}
-                                  className={selectedAmount === amount ? 'selected' : ''}
-                                  onClick={() => {
-                                    setSelectedAmount(amount);
-                                    setCustomAmount('');
-                                  }}
-                                >
-                                  ${amount}
-                                </button>
-                              ))}
-                              <input
-                                type="number"
-                                placeholder="Custom amount"
-                                value={customAmount}
-                                onChange={(e) => {
-                                  setCustomAmount(e.target.value);
-                                  setSelectedAmount(null);
+                                className="team-bet-button home-team"
+                                onClick={() => {
+                                  setSelectedTeam(game.homeTeam);
+                                  setExpandedBets(prev => ({ ...prev, [game.id]: true }));
                                 }}
-                                min="1"
-                              />
+                              >
+                                <div className="team-info">
+                                  <span className="team-name">{game.homeTeam}</span>
+                                  <span className="odds">{game.odds[0]?.price > 0 ? '+' : ''}{game.odds[0]?.price}</span>
+                                </div>
+                              </button>
+                              <button 
+                                className="team-bet-button away-team"
+                                onClick={() => {
+                                  setSelectedTeam(game.awayTeam);
+                                  setExpandedBets(prev => ({ ...prev, [game.id]: true }));
+                                }}
+                              >
+                                <div className="team-info">
+                                  <span className="team-name">{game.awayTeam}</span>
+                                  <span className="odds">{game.odds[1]?.price > 0 ? '+' : ''}{game.odds[1]?.price}</span>
+                                </div>
+                              </button>
                             </div>
+                          )}
+                        </div>
+                      ) : (
+                        // Show betting amount selection
+                        <div className="betting-options">
+                          <div className="selected-team">
+                            <p>Betting on: <strong>{selectedTeam}</strong></p>
+                            <button 
+                              className="change-team-button"
+                              onClick={() => {
+                                setSelectedTeam(null);
+                                setExpandedBets(prev => ({ ...prev, [game.id]: false }));
+                              }}
+                            >
+                              Change Team
+                            </button>
+                          </div>
+                          <div className="bet-amounts">
+                            {BET_AMOUNTS.map(amount => (
+                              <button
+                                key={amount}
+                                className={selectedAmount === amount ? 'selected' : ''}
+                                onClick={() => {
+                                  setSelectedAmount(amount);
+                                  setCustomAmount('');
+                                }}
+                              >
+                                ${amount}
+                              </button>
+                            ))}
+                            <input
+                              type="number"
+                              placeholder="Custom amount"
+                              value={customAmount}
+                              onChange={(e) => {
+                                setCustomAmount(e.target.value);
+                                setSelectedAmount(null);
+                              }}
+                              min="1"
+                            />
+                          </div>
+                          <div className="bet-actions">
                             <button 
                               className="confirm-bet-button"
                               disabled={!selectedTeam || (!selectedAmount && !customAmount)}
@@ -359,9 +566,20 @@ function App() {
                             >
                               Confirm Bet
                             </button>
+                            <button 
+                              className="cancel-bet-button"
+                              onClick={() => {
+                                setExpandedBets(prev => ({ ...prev, [game.id]: false }));
+                                setSelectedTeam(null);
+                                setSelectedAmount(null);
+                                setCustomAmount('');
+                              }}
+                            >
+                              Cancel
+                            </button>
                           </div>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -374,16 +592,25 @@ function App() {
                 </button>
               )}
 
-              {/* Betting history */}
-              <BettingHistory
+              {/* Betting panel with active bets and history */}
+              <BettingPanel
                 userId={user.id}
                 refreshTrigger={betsRefreshTrigger}
                 onBetSold={handleBetSold}
+                onRefreshBets={handleRefreshBets}
               />
             </>
           )}
         </div>
       )}
+
+      {/* Global Notification Component */}
+      <Notification
+        message={notification.message}
+        type={notification.type}
+        isVisible={notification.visible}
+        onClose={closeNotification}
+      />
     </div>
   );
 }

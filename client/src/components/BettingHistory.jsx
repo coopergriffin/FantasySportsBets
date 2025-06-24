@@ -7,12 +7,13 @@
  * @param {number} userId - The ID of the user whose bets to display
  * @param {number} refreshTrigger - Counter that triggers data refresh when incremented
  * @param {Function} onBetSold - Callback function called when a bet is sold
+ * @param {Function} onRefreshBets - Callback function to refresh betting history and resolve completed games
  */
 
 import { useState, useEffect } from 'react';
 import './BettingHistory.css';
 
-function BettingHistory({ userId, refreshTrigger, onBetSold }) {
+function BettingHistory({ userId, refreshTrigger, onBetSold, onRefreshBets }) {
   // Component state
   const [bets, setBets] = useState([]); // Array of user's betting history
   const [loading, setLoading] = useState(true); // Loading state indicator
@@ -151,7 +152,15 @@ function BettingHistory({ userId, refreshTrigger, onBetSold }) {
   // Main component render
   return (
     <div className="betting-history">
-      <h2>Betting History</h2>
+      <div className="betting-history-header">
+        <h2>Betting History</h2>
+        <button 
+          className="refresh-button bets-refresh"
+          onClick={onRefreshBets}
+        >
+          📈 Refresh & Resolve Games
+        </button>
+      </div>
       <div className="bets-list">
         {bets.map((bet) => {
           const betStatus = bet.status || bet.outcome || 'pending';
@@ -172,18 +181,28 @@ function BettingHistory({ userId, refreshTrigger, onBetSold }) {
                   {bet.team && (
                     <span className="bet-team">Team: {bet.team}</span>
                   )}
-                  {bet.game_date && (
+                  {bet.game_date_formatted && (
                     <span className="bet-date">
-                      Game: {new Date(bet.game_date).toLocaleDateString()} at {new Date(bet.game_date).toLocaleTimeString()}
+                      Game: {bet.game_date_formatted.date} at {bet.game_date_formatted.time} ({bet.game_date_formatted.timezone})
                     </span>
                   )}
                   <span className="bet-created">
-                    Placed: {new Date(bet.created_at).toLocaleDateString()} at {new Date(bet.created_at).toLocaleTimeString()}
+                    Placed: {bet.created_at_formatted ? bet.created_at_formatted.date : new Date(bet.created_at).toLocaleDateString()} at {bet.created_at_formatted ? bet.created_at_formatted.time : new Date(bet.created_at).toLocaleTimeString()}
                   </span>
-                  {bet.status_changed_at && !isPending && (
+                  {bet.status_changed_at_formatted && !isPending && (
                     <span className="bet-status-changed">
-                      {betStatus.charAt(0).toUpperCase() + betStatus.slice(1)}: {new Date(bet.status_changed_at).toLocaleDateString()} at {new Date(bet.status_changed_at).toLocaleTimeString()}
+                      {betStatus.charAt(0).toUpperCase() + betStatus.slice(1)}: {bet.status_changed_at_formatted.date} at {bet.status_changed_at_formatted.time}
                     </span>
+                  )}
+                  {!isPending && bet.final_amount !== null && bet.profit_loss !== null && (
+                    <div className="bet-financial-details">
+                      <span className="bet-original">Original: ${bet.amount}</span>
+                      <span className="bet-final">Final: ${bet.final_amount}</span>
+                      <span className={`bet-profit-loss ${bet.profit_loss >= 0 ? 'profit' : 'loss'}`}>
+                        {bet.profit_loss >= 0 ? '+' : ''}${bet.profit_loss} 
+                        {bet.profit_loss >= 0 ? ' 📈' : ' 📉'}
+                      </span>
+                    </div>
                   )}
                 </div>
               </div>
