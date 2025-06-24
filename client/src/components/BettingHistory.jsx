@@ -11,9 +11,10 @@
  */
 
 import { useState, useEffect } from 'react';
+import { formatTimeForDisplay } from '../utils/timeUtils';
 import './BettingHistory.css';
 
-function BettingHistory({ userId, refreshTrigger, onBetSold, onRefreshBets }) {
+function BettingHistory({ userId, refreshTrigger, onBetSold, onRefreshBets, userTimezone = 'America/Toronto' }) {
   // Component state
   const [bets, setBets] = useState([]); // Array of user's betting history
   const [loading, setLoading] = useState(true); // Loading state indicator
@@ -187,7 +188,14 @@ function BettingHistory({ userId, refreshTrigger, onBetSold, onRefreshBets }) {
                     </span>
                   )}
                   <span className="bet-created">
-                    Placed: {bet.created_at_formatted ? bet.created_at_formatted.date : new Date(bet.created_at).toLocaleDateString()} at {bet.created_at_formatted ? bet.created_at_formatted.time : new Date(bet.created_at).toLocaleTimeString()}
+                    Placed: {(() => {
+                      if (bet.created_at_formatted) {
+                        return `${bet.created_at_formatted.date} at ${bet.created_at_formatted.time}`;
+                      } else {
+                        const formatted = formatTimeForDisplay(bet.created_at, userTimezone);
+                        return formatted ? `${formatted.date} at ${formatted.time}` : 'Unknown time';
+                      }
+                    })()}
                   </span>
                   {bet.status_changed_at_formatted && !isPending && (
                     <span className="bet-status-changed">

@@ -13,6 +13,7 @@ import BettingPanel from "./components/BettingPanel"; // User betting panel with
 import Leaderboard from './components/Leaderboard'; // Global leaderboard component
 import Notification from './components/Notification'; // Notification component
 import { fetchOdds, placeBet as placeBetApi, resolveCompletedGames, updateUserTimezone } from "./api"; // API communication functions
+import { formatTimeForDisplay } from "./utils/timeUtils"; // Time formatting utilities
 import "./App.css"; // Component styles
 
 function App() {
@@ -342,7 +343,7 @@ function App() {
     try {
       await updateUserTimezone(timezone);
       setUser(prev => ({ ...prev, timezone }));
-      // Refresh betting history to show updated timestamps
+      // Only refresh betting history to show updated timestamps - no need to fetch new odds
       setBetsRefreshTrigger(prev => prev + 1);
       showNotification('Timezone updated successfully!', 'success');
     } catch (error) {
@@ -382,22 +383,50 @@ function App() {
               <label htmlFor="timezone">Timezone: </label>
               <select 
                 id="timezone" 
-                value={user.timezone || 'America/New_York'} 
+                value={user.timezone || 'America/Toronto'} 
                 onChange={(e) => handleTimezoneChange(e.target.value)}
               >
-                <option value="America/New_York">Eastern (New York)</option>
-                <option value="America/Chicago">Central (Chicago)</option>
-                <option value="America/Denver">Mountain (Denver)</option>
-                <option value="America/Los_Angeles">Pacific (Los Angeles)</option>
-                <option value="America/Phoenix">Arizona (Phoenix)</option>
-                <option value="America/Anchorage">Alaska (Anchorage)</option>
-                <option value="Pacific/Honolulu">Hawaii (Honolulu)</option>
-                <option value="Europe/London">London</option>
-                <option value="Europe/Paris">Paris</option>
-                <option value="Europe/Berlin">Berlin</option>
-                <option value="Asia/Tokyo">Tokyo</option>
-                <option value="Asia/Shanghai">Shanghai</option>
-                <option value="UTC">UTC</option>
+                {/* Canadian Timezones - Ordered by UTC offset */}
+                <optgroup label="🇨🇦 Canada">
+                  <option value="America/St_Johns">St. John's - UTC-3:30</option>
+                  <option value="America/Halifax">Halifax - UTC-4</option>
+                  <option value="America/Toronto">Toronto - UTC-5</option>
+                  <option value="America/Winnipeg">Winnipeg - UTC-6</option>
+                  <option value="America/Edmonton">Edmonton - UTC-7</option>
+                  <option value="America/Vancouver">Vancouver - UTC-8</option>
+                </optgroup>
+                
+                {/* US Major Cities - Ordered by UTC offset */}
+                <optgroup label="🇺🇸 United States">
+                  <option value="Pacific/Honolulu">Honolulu - UTC-10</option>
+                  <option value="America/Anchorage">Anchorage - UTC-9</option>
+                  <option value="America/Los_Angeles">Los Angeles - UTC-8</option>
+                  <option value="America/Phoenix">Phoenix - UTC-7</option>
+                  <option value="America/Denver">Denver - UTC-7</option>
+                  <option value="America/Chicago">Chicago - UTC-6</option>
+                  <option value="America/New_York">New York - UTC-5</option>
+                </optgroup>
+                
+                {/* International Major Cities - Ordered by UTC offset */}
+                <optgroup label="🌍 International">
+                  <option value="Pacific/Auckland">Auckland - UTC+12</option>
+                  <option value="Australia/Sydney">Sydney - UTC+10</option>
+                  <option value="Asia/Tokyo">Tokyo - UTC+9</option>
+                  <option value="Asia/Shanghai">Shanghai - UTC+8</option>
+                  <option value="Asia/Bangkok">Bangkok - UTC+7</option>
+                  <option value="Asia/Dhaka">Dhaka - UTC+6</option>
+                  <option value="Asia/Kolkata">Mumbai - UTC+5:30</option>
+                  <option value="Asia/Karachi">Karachi - UTC+5</option>
+                  <option value="Asia/Dubai">Dubai - UTC+4</option>
+                  <option value="Europe/Moscow">Moscow - UTC+3</option>
+                  <option value="Africa/Cairo">Cairo - UTC+2</option>
+                  <option value="Europe/Paris">Paris - UTC+1</option>
+                  <option value="Europe/London">London - UTC+0</option>
+                  <option value="UTC">UTC (Universal Time)</option>
+                  <option value="Atlantic/Azores">Azores - UTC-1</option>
+                  <option value="America/Sao_Paulo">São Paulo - UTC-3</option>
+                  <option value="America/Argentina/Buenos_Aires">Buenos Aires - UTC-3</option>
+                </optgroup>
               </select>
             </div>
             <button onClick={handleLogout}>Logout</button>
@@ -457,27 +486,9 @@ function App() {
                         <span className="sport-tag">{game.sport}</span>
                         <span className="game-time">
                           {(() => {
-                            const gameDate = new Date(game.commenceTime);
-                            const userTimezone = user?.timezone || 'America/New_York';
-                            
-                            const dateOptions = {
-                              timeZone: userTimezone,
-                              year: 'numeric',
-                              month: '2-digit',
-                              day: '2-digit'
-                            };
-                            
-                            const timeOptions = {
-                              timeZone: userTimezone,
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              hour12: true
-                            };
-                            
-                            const formattedDate = gameDate.toLocaleDateString('en-US', dateOptions);
-                            const formattedTime = gameDate.toLocaleTimeString('en-US', timeOptions);
-                            
-                            return `${formattedDate} at ${formattedTime} (${userTimezone.split('/')[1] || userTimezone})`;
+                            const userTimezone = user?.timezone || 'America/Toronto';
+                            const formattedTime = formatTimeForDisplay(game.commenceTime, userTimezone);
+                            return formattedTime ? formattedTime.full : 'Time unavailable';
                           })()}
                         </span>
                       </div>
@@ -485,8 +496,8 @@ function App() {
                       
                       {!expandedBets[game.id] ? (
                         // Show odds and bet buttons for team selection
-                        <div className="odds-display">
-                          {game.odds && game.odds.length > 0 && (
+                      <div className="odds-display">
+                        {game.odds && game.odds.length > 0 && (
                             <div className="team-betting-options">
                               <button 
                                 className="team-bet-button home-team"
@@ -528,32 +539,32 @@ function App() {
                               }}
                             >
                               Change Team
-                            </button>
-                          </div>
-                          <div className="bet-amounts">
-                            {BET_AMOUNTS.map(amount => (
-                              <button
-                                key={amount}
-                                className={selectedAmount === amount ? 'selected' : ''}
-                                onClick={() => {
-                                  setSelectedAmount(amount);
-                                  setCustomAmount('');
-                                }}
-                              >
-                                ${amount}
                               </button>
-                            ))}
-                            <input
-                              type="number"
-                              placeholder="Custom amount"
-                              value={customAmount}
-                              onChange={(e) => {
-                                setCustomAmount(e.target.value);
-                                setSelectedAmount(null);
-                              }}
-                              min="1"
-                            />
-                          </div>
+                            </div>
+                            <div className="bet-amounts">
+                              {BET_AMOUNTS.map(amount => (
+                                <button
+                                  key={amount}
+                                  className={selectedAmount === amount ? 'selected' : ''}
+                                  onClick={() => {
+                                    setSelectedAmount(amount);
+                                    setCustomAmount('');
+                                  }}
+                                >
+                                  ${amount}
+                                </button>
+                              ))}
+                              <input
+                                type="number"
+                                placeholder="Custom amount"
+                                value={customAmount}
+                                onChange={(e) => {
+                                  setCustomAmount(e.target.value);
+                                  setSelectedAmount(null);
+                                }}
+                                min="1"
+                              />
+                            </div>
                           <div className="bet-actions">
                             <button 
                               className="confirm-bet-button"
@@ -577,8 +588,8 @@ function App() {
                               Cancel
                             </button>
                           </div>
-                        </div>
-                      )}
+                          </div>
+                        )}
                     </div>
                   ))
                 )}
@@ -592,11 +603,12 @@ function App() {
               )}
 
               {/* Betting panel with active bets and history */}
-              <BettingPanel
-                userId={user.id}
+                            <BettingPanel 
+                userId={user.id} 
                 refreshTrigger={betsRefreshTrigger}
                 onBetSold={handleBetSold}
                 onRefreshBets={handleRefreshBets}
+                userTimezone={user?.timezone || 'America/Toronto'}
               />
             </>
           )}

@@ -787,24 +787,62 @@
 }
 
 .timezone-selector select {
-  padding: 0.5rem;
+  padding: 0.6rem 0.8rem;
   border: 1px solid #4a4a4a;
-  border-radius: 4px;
+  border-radius: 6px;
   background: linear-gradient(135deg, #2a2a2a, #1a1a1a);
   color: #fff;
   font-size: 0.9rem;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.3s ease;
+  min-width: 300px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .timezone-selector select:hover {
   border-color: #646cff;
+  background: linear-gradient(135deg, #3a3a3a, #2a2a2a);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
 }
 
 .timezone-selector select:focus {
   outline: none;
   border-color: #646cff;
-  box-shadow: 0 0 0 2px rgba(100, 108, 255, 0.2);
+  box-shadow: 0 0 0 3px rgba(100, 108, 255, 0.3);
+  background: linear-gradient(135deg, #3a3a3a, #2a2a2a);
+}
+
+/* Style for dropdown options */
+.timezone-selector select option {
+  background: #2a2a2a;
+  color: #fff;
+  padding: 0.5rem;
+  font-weight: 500;
+}
+
+.timezone-selector select option:hover {
+  background: #646cff;
+  color: #fff;
+}
+
+/* Style for optgroups */
+.timezone-selector select optgroup {
+  background: #1a1a1a;
+  color: #90a4ae;
+  font-weight: 600;
+  font-style: italic;
+  padding: 0.3rem 0.5rem;
+  border-top: 1px solid #4a4a4a;
+}
+
+.timezone-selector select optgroup option {
+  background: #2a2a2a;
+  color: #fff;
+  padding-left: 1rem;
+  font-weight: 400;
+  font-style: normal;
 }
 
 .loading {

@@ -52,7 +52,7 @@ const SPORTS_CONFIG = {
         maxGamesPerFetch: 5,
         cacheMinutes: 60,
         minBetCutoff: 15, // minutes before game starts
-        defaultTimezone: 'America/New_York'
+        defaultTimezone: 'America/Toronto'
     },
     NBA: {
         displayName: 'NBA',
@@ -62,7 +62,7 @@ const SPORTS_CONFIG = {
         maxGamesPerFetch: 5,
         cacheMinutes: 60,
         minBetCutoff: 15,
-        defaultTimezone: 'America/New_York'
+        defaultTimezone: 'America/Toronto'
     },
     MLB: {
         displayName: 'MLB',
@@ -72,7 +72,7 @@ const SPORTS_CONFIG = {
         maxGamesPerFetch: 5,
         cacheMinutes: 60,
         minBetCutoff: 15,
-        defaultTimezone: 'America/New_York'
+        defaultTimezone: 'America/Toronto'
     },
     NHL: {
         displayName: 'NHL',
@@ -82,7 +82,7 @@ const SPORTS_CONFIG = {
         maxGamesPerFetch: 5,
         cacheMinutes: 60,
         minBetCutoff: 15,
-        defaultTimezone: 'America/New_York'
+        defaultTimezone: 'America/Toronto'
     }
 };
 

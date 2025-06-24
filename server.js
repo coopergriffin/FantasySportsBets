@@ -233,14 +233,14 @@ const fetchOddsForSport = async (sportKey, sportDisplay) => {
                 await new Promise((resolve, reject) => {
                     db.run(
                         `INSERT INTO odds_cache (sport, game, home_team, away_team, commence_time, odds) 
-                         VALUES (?, ?, ?, ?, ?, ?)`,
-                        [
-                            sportDisplay,
-                            `${game.home_team} vs ${game.away_team}`,
-                            game.home_team,
-                            game.away_team,
-                            game.commence_time,
-                            JSON.stringify(odds)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [
+                    sportDisplay,
+                    `${game.home_team} vs ${game.away_team}`,
+                    game.home_team,
+                    game.away_team,
+                    game.commence_time,
+                    JSON.stringify(odds)
                         ],
                         (err) => {
                             if (err) reject(err);
@@ -281,7 +281,7 @@ const cleanupExcessGames = async (sportDisplay, maxGames) => {
                  ORDER BY datetime(commence_time) ASC`,
                 [sportDisplay],
                 (err, rows) => {
-                    if (err) reject(err);
+                if (err) reject(err);
                     else resolve(rows);
                 }
             );
@@ -375,7 +375,7 @@ app.get('/api/odds', authenticateToken, async (req, res) => {
         const query = `SELECT * FROM odds_cache 
                       WHERE sport = ? AND datetime(commence_time) > datetime('now')
                       ORDER BY datetime(commence_time) ASC 
-                      LIMIT ? OFFSET ?`;
+                  LIMIT ? OFFSET ?`;
         const countQuery = `SELECT COUNT(*) as count FROM odds_cache 
                            WHERE sport = ? AND datetime(commence_time) > datetime('now')`;
 
@@ -608,7 +608,7 @@ db.serialize(() => {
             email TEXT,
             balance REAL DEFAULT 1000.00,
             created_at DATETIME DEFAULT (datetime('now', 'utc')),
-            timezone TEXT DEFAULT 'America/New_York'
+            timezone TEXT DEFAULT 'America/Toronto'
         )
     `);
 
@@ -634,7 +634,7 @@ db.serialize(() => {
 
     // Add new columns to existing users table if they don't exist
     db.run(`
-        ALTER TABLE users ADD COLUMN timezone TEXT DEFAULT 'America/New_York'
+        ALTER TABLE users ADD COLUMN timezone TEXT DEFAULT 'America/Toronto'
     `, (err) => {
         if (err && !err.message.includes('duplicate column name')) {
             console.error('Error adding timezone column:', err);
@@ -862,13 +862,21 @@ app.put('/user/timezone', authenticateToken, [
     const userId = req.user.userId;
     const { timezone } = req.body;
 
-    // List of common valid timezones
+    // List of valid timezones - one major city per unique timezone
     const validTimezones = [
-        'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
-        'America/Phoenix', 'America/Anchorage', 'Pacific/Honolulu',
-        'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Rome',
-        'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Kolkata', 'Australia/Sydney',
-        'UTC'
+        // Canadian Major Cities
+        'America/St_Johns', 'America/Halifax', 'America/Toronto', 
+        'America/Winnipeg', 'America/Edmonton', 'America/Vancouver',
+        
+        // US Major Cities
+        'Pacific/Honolulu', 'America/Anchorage', 'America/Los_Angeles', 'America/Phoenix',
+        'America/Denver', 'America/Chicago', 'America/New_York',
+        
+        // International Major Cities (UTC+12 to UTC-3)
+        'Pacific/Auckland', 'Australia/Sydney', 'Asia/Tokyo', 'Asia/Shanghai',
+        'Asia/Bangkok', 'Asia/Dhaka', 'Asia/Kolkata', 'Asia/Karachi', 'Asia/Dubai',
+        'Europe/Moscow', 'Africa/Cairo', 'Europe/Paris', 'Europe/London',
+        'UTC', 'Atlantic/Azores', 'America/Sao_Paulo', 'America/Argentina/Buenos_Aires'
     ];
 
     if (!validTimezones.includes(timezone)) {
@@ -1213,18 +1221,18 @@ app.get('/bets/:userId', authenticateToken, (req, res) => {
             return res.status(500).json({ error: "Failed to fetch user info" });
         }
 
-        const userTimezone = userInfo?.timezone || 'America/New_York';
+        const userTimezone = userInfo?.timezone || 'America/Toronto';
 
         // Then get all bets for the user
-        db.all(
-            "SELECT * FROM bets WHERE user_id = ? ORDER BY created_at DESC",
-            [userId],
-            (err, rows) => {
-                if (err) {
-                    console.error('Database error:', err);
-                    return res.status(500).json({ error: "Failed to fetch betting history" });
-                }
-                console.log('Bets found:', rows ? rows.length : 0);
+    db.all(
+        "SELECT * FROM bets WHERE user_id = ? ORDER BY created_at DESC",
+        [userId],
+        (err, rows) => {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({ error: "Failed to fetch betting history" });
+            }
+            console.log('Bets found:', rows ? rows.length : 0);
                 
                 // Process bets and format timestamps
                 const processedBets = rows.map(bet => {
@@ -1553,7 +1561,7 @@ app.post('/sell-bet/:betId', authenticateToken, async (req, res) => {
                                     reject(err);
                                 } else {
                                     console.log(`✅ Updated user ${userId} balance by $${sellValue}`);
-                                    resolve();
+                                resolve();
                                 }
                             }
                         );
@@ -1570,7 +1578,7 @@ app.post('/sell-bet/:betId', authenticateToken, async (req, res) => {
                                     reject(err);
                                 } else {
                                     console.log(`✅ Updated bet ${betId} status to sold`);
-                                    resolve();
+                                resolve();
                                 }
                             }
                         );
@@ -1920,7 +1928,7 @@ app.post('/api/resolve-completed-games', authenticateToken, async (req, res) => 
  * @param {string} timezone - User's timezone (e.g., 'America/New_York')
  * @returns {Object} Formatted date information
  */
-const formatTimestampForUser = (utcTimestamp, timezone = 'America/New_York') => {
+const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
     if (!utcTimestamp) return null;
     
     try {
