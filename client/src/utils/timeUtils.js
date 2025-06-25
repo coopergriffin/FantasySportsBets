@@ -71,13 +71,8 @@ export const formatTimeForDisplay = (utcTimestamp, timezone = 'America/Toronto')
     return {
       date: formattedDate,
       time: formattedTime,
-<<<<<<< HEAD
-      timezone: shortTimezone,
-      full: `${formattedDate} at ${formattedTime} ${shortTimezone}`
-=======
       timezone: actualTimezone,
       full: `${formattedDate} at ${formattedTime} (${actualTimezone})`
->>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
     };
   } catch (error) {
     console.error('Error formatting time:', error);

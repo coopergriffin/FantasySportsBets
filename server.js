@@ -1254,14 +1254,8 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
             const roundedAmount = roundToTwoDecimals(amount);
 
             // Place bet and update balance using final odds
-<<<<<<< HEAD
             // Store proper UTC timestamp that preserves timezone info
             const utcTimestamp = new Date().toISOString();
-            
-=======
-            // Store proper UTC timestamp in ISO format for consistent handling
-            const utcTimestamp = new Date().toISOString();
->>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
             await db.run(
                 'INSERT INTO bets (user_id, game, team, amount, odds, sport, game_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                 [userId, game, team, roundedAmount, finalOdds, sport, game_date, utcTimestamp]
@@ -2005,88 +1999,10 @@ app.post('/api/resolve-completed-games', authenticateToken, async (req, res) => 
                         
                         const completedGames = await response.json();
                         
-<<<<<<< HEAD
                         // Find matching game with STRICT date verification
                         gameResult = completedGames.find(game => {
                             const exactMatch = (game.home_team === homeTeam && game.away_team === awayTeam) ||
                                              (game.home_team === awayTeam && game.away_team === homeTeam);
-=======
-                        // Determine sport from game info
-                        const sport = gameInfo.sport;
-                        const supportedSports = getSupportedSports();
-                        const sportInfo = supportedSports.find(s => s.label === sport);
-                        
-                        if (!sportInfo) {
-                            throw new Error(`Unknown sport: ${sport}`);
-                        }
-                        const sportKey = getApiSportKey(sportInfo.value);
-                        
-                        // Fetch completed games from the API with scores
-                        const apiKeys = config.server.odds.apiKeys;
-                        let gameResult = null;
-                        for (let i = 0; i < apiKeys.length; i++) {
-                            try {
-                                console.log(`🔄 Trying API key ${i + 1}/${apiKeys.length} for completed game results`);
-                                
-                                // Fetch completed games with scores
-                                const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${apiKeys[i]}&daysFrom=3&daysTo=1`;
-                                const response = await fetch(url);
-                                
-                                if (!response.ok) {
-                                    console.log(`❌ API key ${i + 1} failed with status ${response.status}`);
-                                    if (i === apiKeys.length - 1) {
-                                        throw new Error(`All API keys failed. Last status: ${response.status}`);
-                                    }
-                                    continue;
-                                }
-                                
-                                const completedGames = await response.json();
-                                console.log(`✅ Retrieved ${completedGames.length} completed games from API`);
-                                
-                                // Find the matching game
-                                gameResult = completedGames.find(game => {
-                                    const gameHomeTeam = game.home_team;
-                                    const gameAwayTeam = game.away_team;
-                                    
-                                    // Try exact match first
-                                    if ((gameHomeTeam === homeTeam && gameAwayTeam === awayTeam) ||
-                                        (gameHomeTeam === awayTeam && gameAwayTeam === homeTeam)) {
-                                        return true;
-                                    }
-                                    
-                                    // Try partial match (in case of slight name differences)
-                                    const homeMatch = gameHomeTeam.toLowerCase().includes(homeTeam.toLowerCase()) ||
-                                                     homeTeam.toLowerCase().includes(gameHomeTeam.toLowerCase());
-                                    const awayMatch = gameAwayTeam.toLowerCase().includes(awayTeam.toLowerCase()) ||
-                                                     awayTeam.toLowerCase().includes(gameAwayTeam.toLowerCase());
-                                                     
-                                    return (homeMatch && awayMatch);
-                                });
-                                
-                                if (gameResult) {
-                                    console.log(`🎯 Found matching completed game:`, {
-                                        game: `${gameResult.home_team} vs ${gameResult.away_team}`,
-                                        completed: gameResult.completed,
-                                        scores: gameResult.scores
-                                    });
-                                    break;
-                                }
-                                
-                                break; // Exit API key loop on successful response, even if no game found
-                                
-                            } catch (apiError) {
-                                console.log(`❌ API key ${i + 1} error:`, apiError.message);
-                                if (i === apiKeys.length - 1) {
-                                    throw apiError;
-                                }
-                            }
-                        }
-                        
-                        // Determine winner from actual game results
-                        if (gameResult && gameResult.completed && gameResult.scores && gameResult.scores.length >= 2) {
-                            const homeScore = gameResult.scores.find(score => score.name === gameResult.home_team);
-                            const awayScore = gameResult.scores.find(score => score.name === gameResult.away_team);
->>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
                             
                             if (!exactMatch) return false;
                             
@@ -2398,7 +2314,6 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
     if (!utcTimestamp) return null;
     
     try {
-<<<<<<< HEAD
         // Handle different input formats robustly - ALWAYS treat as UTC
         let date;
         if (typeof utcTimestamp === 'string') {
@@ -2413,40 +2328,6 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
             // For any other format, try to parse and assume UTC
             else {
                 date = new Date(utcTimestamp);
-=======
-        let date;
-        
-        if (typeof utcTimestamp === 'string') {
-            // Handle different timestamp formats more robustly
-            if (utcTimestamp.endsWith('Z')) {
-                // Already has Z suffix - it's proper UTC
-                date = new Date(utcTimestamp);
-            } else if (utcTimestamp.includes('+') || utcTimestamp.match(/-\d{2}:\d{2}$/)) {
-                // Has timezone offset like +05:00 or -04:00 
-                date = new Date(utcTimestamp);
-            } else {
-                // Plain datetime string from SQLite - ALWAYS treat as UTC
-                // SQLite format: "2025-01-24 18:07:14" or "2025-01-24T18:07:14"
-                let isoString = utcTimestamp;
-                
-                // Convert space to T if needed for proper ISO format
-                if (isoString.includes(' ') && !isoString.includes('T')) {
-                    isoString = isoString.replace(' ', 'T');
-                }
-                
-                // Add Z suffix to explicitly indicate UTC
-                if (!isoString.endsWith('Z')) {
-                    isoString += 'Z';
-                }
-                
-                date = new Date(isoString);
-                
-                // If that didn't work, try alternative parsing
-                if (isNaN(date.getTime())) {
-                    // Try parsing as UTC explicitly
-                    date = new Date(utcTimestamp + ' UTC');
-                }
->>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
             }
         } else {
             date = new Date(utcTimestamp);
@@ -2454,7 +2335,6 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
         
         // Validate the date object
         if (isNaN(date.getTime())) {
-<<<<<<< HEAD
             console.error('❌ Invalid date format:', utcTimestamp);
             return { 
                 utc: utcTimestamp, 
@@ -2464,10 +2344,6 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
                 timezone: timezone,
                 error: 'Invalid date format'
             };
-=======
-            console.error('Invalid date after parsing:', utcTimestamp);
-            return { utc: utcTimestamp, local: 'Invalid Date', date: 'Invalid Date', time: 'Invalid Time', timezone };
->>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
         }
         
         // Validate timezone - use fallback if invalid
@@ -2502,7 +2378,6 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
             return acc;
         }, {});
         
-<<<<<<< HEAD
         // Get timezone info for debugging/display
         const tzInfo = {
             name: validTimezone,
@@ -2525,34 +2400,6 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
                 userTimezoneOffset: -date.getTimezoneOffset() / 60,
                 isDST: isDaylightSavingTime(date, validTimezone)
             }
-=======
-        // Get the actual timezone abbreviation
-        const timezoneFormatter = new Intl.DateTimeFormat('en-US', {
-            timeZone: timezone,
-            timeZoneName: 'short'
-        });
-        
-        let shortTimezone = timezone.split('/').pop() || timezone;
-        try {
-            const timezonePart = timezoneFormatter.formatToParts(date).find(part => part.type === 'timeZoneName');
-            if (timezonePart) {
-                shortTimezone = timezonePart.value;
-            }
-        } catch (e) {
-            // Fallback to simple extraction
-        }
-        
-        // Build the display time with AM/PM
-        const displayTime = `${formatted.hour}:${formatted.minute} ${formatted.dayPeriod || ''}`.trim();
-        
-        return {
-            utc: utcTimestamp,
-            local: `${formatted.year}-${formatted.month}-${formatted.day} ${displayTime}`,
-            date: `${formatted.month}/${formatted.day}/${formatted.year}`,
-            time: displayTime,
-            timezone: shortTimezone,
-            fullTime: `${formatted.hour}:${formatted.minute}:${formatted.second} ${formatted.dayPeriod || ''}`.trim()
->>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
         };
     } catch (error) {
         console.error('❌ Error formatting timestamp:', error);

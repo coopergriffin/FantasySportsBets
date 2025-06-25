@@ -48,7 +48,6 @@ function App() {
   const [gamesRefreshTrigger, setGamesRefreshTrigger] = useState(0); // Force games refresh
   const [isRefreshingGames, setIsRefreshingGames] = useState(false); // Games refresh loading state
   const [lastGamesRefresh, setLastGamesRefresh] = useState(null); // Track last games refresh time
-  const [lastAutoResolve, setLastAutoResolve] = useState(null); // Track last auto-resolve to prevent spam
 
   // Constants
   const SPORTS = [
@@ -81,27 +80,7 @@ function App() {
             const userData = await response.json();
             setUser(userData);
             console.log('Restored user session:', userData.username);
-            
-            // Set up auto-logout timer for security (logout after 2 hours of inactivity)
-            let inactivityTimer;
-            const resetTimer = () => {
-              clearTimeout(inactivityTimer);
-              inactivityTimer = setTimeout(() => {
-                console.log('Auto-logout due to inactivity');
-                handleLogout();
-                showNotification('Logged out due to inactivity for security', 'warning');
-              }, 2 * 60 * 60 * 1000); // 2 hours
-            };
-            
-            // Reset timer on user activity
-            const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
-            events.forEach(event => {
-              document.addEventListener(event, resetTimer, true);
-            });
-            
-            resetTimer(); // Start the timer
           } else {
-            // Invalid token, remove it
             localStorage.removeItem('token');
             console.log('Removed invalid token from localStorage');
           }
@@ -145,18 +124,8 @@ function App() {
         setPagination(response.pagination);
         setError(null);
         
-        // Auto-refresh betting history and check for completed games when user enters page
+        // Auto-refresh betting history when user enters page
         setBetsRefreshTrigger(prev => prev + 1);
-        
-<<<<<<< HEAD
-        // Auto-check for completed games using real API data
-        handleRefreshBets();
-=======
-        // Auto-resolve completed games when user loads/returns to main screen
-        setTimeout(() => {
-          autoResolveGames();
-        }, 2000); // Small delay to allow everything to load first
->>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
       } catch (error) {
         console.error('Error fetching odds:', error);
         setError('Failed to fetch odds');
@@ -183,7 +152,6 @@ function App() {
         if (now - lastVisibilityRefresh > 30000) {
           console.log('🔄 User returned to page, auto-refreshing betting data...');
           setBetsRefreshTrigger(prev => prev + 1);
-          handleRefreshBets();
           lastVisibilityRefresh = now;
         }
       }
@@ -195,26 +163,6 @@ function App() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [user]);
-
-  /**
-   * Effect hook to auto-refresh betting data on page load
-   * Ensures fresh data whenever user accesses the app
-   */
-  useEffect(() => {
-    if (!user) return;
-
-    // Only auto-refresh betting data on initial login, not on every re-render
-    const hasAutoRefreshed = sessionStorage.getItem('hasAutoRefreshed');
-    if (!hasAutoRefreshed) {
-      const timeoutId = setTimeout(() => {
-        console.log('🔄 Auto-refreshing betting data on initial page load...');
-        handleRefreshBets();
-        sessionStorage.setItem('hasAutoRefreshed', 'true');
-      }, 1000); // Longer delay to prevent conflicts
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [user?.id]); // Trigger when user ID changes (login/logout)
 
   /**
    * Loads games with pagination
@@ -261,10 +209,13 @@ function App() {
     setUser(response.user);
     // Betting history refresh now happens in useEffect when user is set
     
-    // Auto-resolve completed games when user logs in
-    setTimeout(() => {
-      autoResolveGames();
-    }, 1000); // Small delay to allow user state to fully set
+    // Reset state
+    setSelectedTeam(null);
+    setSelectedAmount(null);
+    setCustomAmount('');
+    setExpandedBets({});
+    setShowRegister(false);
+    setCurrentPage(1);
   };
 
   /**
@@ -273,6 +224,7 @@ function App() {
    */
   const handleRegisterSuccess = () => {
     setShowRegister(false);
+    showNotification('Registration successful! Please log in.', 'success');
   };
 
   /**
@@ -284,143 +236,57 @@ function App() {
    * @param {number} selectedOdds - The odds for the selected team
    */
   const handlePlaceBet = async (game, amount, selectedTeam, selectedOdds) => {
-    if (!user) {
-      showNotification("Please log in to place bets", "warning");
-      return;
-    }
-
-    if (user.balance < amount) {
-      showNotification("Insufficient balance", "error");
-      return;
-    }
-
     try {
-      const response = await placeBetApi({
-        game: `${game.homeTeam} vs ${game.awayTeam}`,
-        team: selectedTeam,
-        amount: amount,
-        odds: selectedOdds,
-        sport: game.sport,
-        game_date: game.commenceTime
-      });
+      const betAmount = parseFloat(amount);
+      
+      if (isNaN(betAmount) || betAmount <= 0) {
+        showNotification('Please enter a valid bet amount', 'error');
+        return;
+      }
 
+      if (betAmount > user.balance) {
+        showNotification(`Insufficient balance. You have $${user.balance}`, 'error');
+        return;
+      }
+
+             const betData = {
+         gameId: game.id,
+         team: selectedTeam,
+         amount: betAmount,
+         odds: selectedOdds,
+         homeTeam: game.homeTeam,
+         awayTeam: game.awayTeam,
+         startTime: game.startTime,
+         sport: game.sport
+       };
+
+      console.log('Placing bet with data:', betData);
+      
+      const response = await placeBetApi(betData);
+      
       if (response.success) {
-        setUser(prevUser => ({
-          ...prevUser,
-          balance: response.newBalance
-        }));
-        // Close bet options after successful bet
-        setExpandedBets(prev => ({
-          ...prev,
-          [game.id]: false
-        }));
-        // Reset selections
+        showNotification(
+          `✅ Bet placed successfully! $${betAmount} on ${selectedTeam}`, 
+          'success'
+        );
+        
+        // Update user balance
+        setUser(prev => ({ ...prev, balance: response.newBalance }));
+        
+        // Reset betting form
         setSelectedTeam(null);
         setSelectedAmount(null);
         setCustomAmount('');
-        // Trigger betting history refresh
-        setBetsRefreshTrigger(prev => prev + 1);
+        setExpandedBets({});
         
-        // Show appropriate success message based on odds updates
-        if (response.oddsUpdated) {
-          showNotification(
-            `Bet placed successfully! Odds were updated from ${response.originalOdds} to ${response.finalOdds} before placing the bet.`, 
-            "success"
-          );
-          // Refresh odds display to show current values
-          try {
-            const oddsResponse = await fetchOdds(currentPage, selectedSport);
-            setOdds(oddsResponse.games || []);
-          } catch (refreshError) {
-            console.error('Error refreshing odds display:', refreshError);
-          }
-        } else {
-          showNotification("Bet placed successfully!", "success");
-        }
+        // Refresh betting history
+        setBetsRefreshTrigger(prev => prev + 1);
+      } else {
+        showNotification(response.error || 'Failed to place bet', 'error');
       }
     } catch (error) {
-      // Auto-refresh odds for any betting error to get current data
-      console.log('Betting error occurred, auto-refreshing odds:', error.message);
-      
-      try {
-        const response = await fetchOdds(currentPage, selectedSport);
-        setOdds(response.games || []);
-        console.log('✅ Odds refreshed automatically after betting error');
-      } catch (refreshError) {
-        console.error('Error auto-refreshing odds:', refreshError);
-      }
-      
-      // Handle different types of errors
-      if (error.oddsChanged) {
-        // Show confirmation dialog for odds changes
-        const confirmed = confirm(
-          `⚠️ ODDS CHANGED!\n\n` +
-          `Original odds: ${error.originalOdds}\n` +
-          `Current odds: ${error.currentOdds}\n` +
-          `Difference: ${error.difference} points\n\n` +
-          `Do you want to continue with the updated odds (${error.currentOdds})?`
-        );
-        
-        if (confirmed) {
-          // User confirmed, place bet with updated odds
-          try {
-            const confirmResponse = await fetch('http://localhost:5000/api/bets/confirm-odds', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('token')}`
-              },
-              body: JSON.stringify({
-                game: game.homeTeam + ' vs ' + game.awayTeam,
-                team: selectedTeam,
-                amount: parseFloat(amount),
-                confirmedOdds: error.currentOdds,
-                sport: game.sport,
-                game_date: game.commenceTime
-              })
-            });
-
-            const confirmResult = await confirmResponse.json();
-            
-            if (confirmResult.success) {
-              showNotification(`✅ Bet placed successfully with updated odds (${confirmResult.finalOdds})!`, "success");
-              
-              // Update user balance and refresh
-              setUser(prev => ({ ...prev, balance: confirmResult.newBalance }));
-              handleRefreshBets();
-              
-              // Refresh odds display to show current values
-              try {
-                const oddsResponse = await fetchOdds(currentPage, selectedSport);
-                setOdds(oddsResponse.games || []);
-              } catch (refreshError) {
-                console.error('Error refreshing odds display:', refreshError);
-              }
-              
-              // Reset form
-              setExpandedBets(prev => ({ ...prev, [game.id]: false }));
-              setSelectedTeam(null);
-              setSelectedAmount(null);
-              setCustomAmount('');
-            } else if (confirmResult.oddsChangedAgain) {
-              showNotification("⚠️ " + confirmResult.message, "warning");
-            } else {
-              throw new Error(confirmResult.message);
-            }
-          } catch (confirmError) {
-            console.error('Error confirming bet with updated odds:', confirmError);
-            showNotification("Failed to place bet with updated odds: " + confirmError.message, "error");
-          }
-        } else {
-          showNotification("Bet cancelled due to odds change.", "info");
-        }
-      } else if (error.message && error.message.includes('Insufficient balance')) {
-        showNotification("❌ Insufficient balance for this bet.", "error");
-      } else if (error.message && error.message.includes('game has already started')) {
-        showNotification("⏰ Cannot place bet - this game has already started.", "warning");
-      } else {
-        showNotification(error.message || "Failed to place bet. Odds have been refreshed - please try again.", "error");
-      }
+      console.error('Error placing bet:', error);
+      showNotification('Error placing bet: ' + error.message, 'error');
     }
   };
 
@@ -434,12 +300,14 @@ function App() {
     setOdds([]);
     setError(null);
     setShowLeaderboard(false); // Reset view on logout
+    showNotification('Logged out successfully', 'info');
   };
 
   /**
    * Handles bet sale and refreshes user data
    */
   const handleBetSold = async () => {
+    // Update user balance after bet is sold
     try {
       const response = await fetch('http://localhost:5000/user', {
         headers: {
@@ -449,19 +317,12 @@ function App() {
         credentials: 'include'
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch user data');
+      if (response.ok) {
+        const userData = await response.json();
+        setUser(userData);
       }
-
-      const userData = await response.json();
-      setUser(userData);
-      
-      // Increment the refresh trigger to update betting history
-      setBetsRefreshTrigger(prev => prev + 1);
     } catch (error) {
-      console.error('Error fetching user data:', error);
-      showNotification('Failed to update user data. Please refresh the page.', 'error');
+      console.error('Error updating user balance after bet sale:', error);
     }
   };
 
@@ -470,158 +331,27 @@ function App() {
    * Only refreshes if last refresh was more than 5 minutes ago
    */
   const handleRefreshGames = async () => {
-    const now = Date.now();
-    const fiveMinutesAgo = now - (5 * 60 * 1000);
+    if (isRefreshingGames) return;
     
-    // Prevent too frequent refreshes
-    if (lastGamesRefresh && lastGamesRefresh > fiveMinutesAgo) {
-      const minutesLeft = Math.ceil((lastGamesRefresh + (5 * 60 * 1000) - now) / (60 * 1000));
-      showNotification(`Please wait ${minutesLeft} more minute(s) before refreshing games to conserve API calls.`, 'warning');
-      return;
-    }
-
     setIsRefreshingGames(true);
+    setLastGamesRefresh(Date.now());
+    
     try {
-      console.log('🔄 Manually refreshing games data...');
-      const response = await fetchOdds(1, selectedSport, true); // Force refresh
+      console.log('🔄 Manual games refresh initiated...');
+      const response = await fetchOdds(1, selectedSport, true); // Force fresh data
       setOdds(response.games || []);
       setPagination(response.pagination);
       setCurrentPage(1);
-      setLastGamesRefresh(now);
       setError(null);
-      console.log('✅ Games data refreshed successfully');
+      
+      showNotification(`✅ Games refreshed! Found ${response.games?.length || 0} games`, 'success');
     } catch (error) {
       console.error('Error refreshing games:', error);
-      setError('Failed to refresh games data');
+      showNotification('Failed to refresh games: ' + error.message, 'error');
     } finally {
       setIsRefreshingGames(false);
     }
   };
-
-  /**
-   * Auto-resolves completed games silently in the background
-   * Called automatically when user logs in or returns to the main screen
-   * Includes throttling to prevent excessive API calls
-   */
-  const autoResolveGames = async () => {
-    try {
-      // Throttle auto-resolve to prevent excessive API calls (max once every 10 minutes)
-      const now = Date.now();
-      const tenMinutesAgo = now - (10 * 60 * 1000);
-      
-      if (lastAutoResolve && lastAutoResolve > tenMinutesAgo) {
-        console.log('⏸️  Auto-resolve skipped - too recent (within 10 minutes)');
-        return;
-      }
-      
-      console.log('🔄 Auto-resolving completed games in background...');
-      setLastAutoResolve(now);
-      
-      const result = await resolveCompletedGames();
-      
-      if (result.success && result.resolvedGames > 0) {
-        // Update user balance after resolving games
-        const response = await fetch('http://localhost:5000/user', {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json'
-          },
-          credentials: 'include'
-        });
-
-        if (response.ok) {
-          const userData = await response.json();
-          setUser(userData);
-        }
-
-        // Show a subtle success notification
-        const message = `🎯 ${result.resolvedGames} completed games resolved automatically!`;
-        showNotification(message, 'success');
-        
-        // Update last refresh timestamp so user can see when auto-resolution happened
-        setLastGamesRefresh(now);
-        
-        // Trigger betting history refresh to show updated statuses
-        setBetsRefreshTrigger(prev => prev + 1);
-      }
-    } catch (error) {
-      console.error('Error auto-resolving games:', error);
-      // Fail silently - don't disrupt user experience
-    }
-  };
-
-  /**
-   * Refreshes betting history and auto-resolves completed games
-   * Called when user manually refreshes or after significant actions
-   */
-  const handleRefreshBets = useCallback(async () => {
-    try {
-      // First resolve any completed games
-      console.log('🎯 Auto-resolving completed games...');
-      const result = await resolveCompletedGames();
-      
-      if (result.success) {
-        // Update user balance if any games were resolved
-        if (result.resolvedGames > 0) {
-          const response = await fetch('http://localhost:5000/user', {
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`,
-              'Content-Type': 'application/json'
-            },
-            credentials: 'include'
-          });
-
-          if (response.ok) {
-            const userData = await response.json();
-            setUser(userData);
-          }
-        }
-
-        // Build comprehensive status message for user transparency
-        let message = result.message;
-        
-<<<<<<< HEAD
-        if (result.resolvedGames > 0) {
-          message += `\n\n✅ Settled Games:`;
-          result.gameResults.forEach(game => {
-            message += `\n• ${game.game}: ${game.winners} winners, ${game.losers} losses`;
-          });
-        }
-        
-        if (result.failedChecks && result.failedChecks.length > 0) {
-          message += `\n\n⚠️ Could not verify (${result.failedChecks.length} games):`;
-          result.failedChecks.forEach(game => {
-            message += `\n• ${game.game}: ${game.reason}`;
-          });
-          message += `\nThese bets remain pending until API data is available.`;
-        }
-        
-        if (result.pendingGames && result.pendingGames.length > 0) {
-          message += `\n\n⏳ Still in progress (${result.pendingGames.length} games):`;
-          result.pendingGames.forEach(game => {
-            message += `\n• ${game.game}: ${game.status}`;
-          });
-        }
-        
-        const notificationType = result.resolvedGames > 0 ? 'success' : 
-                               result.failedChecks?.length > 0 ? 'warning' : 'info';
-        
-        showNotification(message, notificationType);
-=======
-        showNotification(message, 'success');
-        
-        // Update last refresh timestamp when manual resolution happens
-        setLastGamesRefresh(Date.now());
->>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
-      }
-    } catch (error) {
-      console.error('Error auto-resolving games:', error);
-      // Continue with refresh even if auto-resolve fails
-    }
-    
-    // Trigger betting history refresh
-    setBetsRefreshTrigger(prev => prev + 1);
-  }, []);
 
   /**
    * Handles timezone change
@@ -631,7 +361,6 @@ function App() {
     try {
       await updateUserTimezone(timezone);
       setUser(prev => ({ ...prev, timezone }));
-      // Only refresh betting history to show updated timestamps - no need to fetch new odds
       setBetsRefreshTrigger(prev => prev + 1);
       showNotification('Timezone updated successfully!', 'success');
     } catch (error) {
@@ -673,6 +402,54 @@ function App() {
       }
     }
   };
+
+  /**
+   * Refreshes betting history and auto-resolves completed games
+   * Called when user manually refreshes or after significant actions
+   */
+  const handleRefreshBets = useCallback(async () => {
+    try {
+      console.log('🎯 Auto-resolving completed games...');
+      const result = await resolveCompletedGames();
+      
+      if (result.success) {
+        // Update user balance if any games were resolved
+        if (result.resolvedGames > 0) {
+          const response = await fetch('http://localhost:5000/user', {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`,
+              'Content-Type': 'application/json'
+            },
+            credentials: 'include'
+          });
+
+          if (response.ok) {
+            const userData = await response.json();
+            setUser(userData);
+          }
+        }
+
+        let message = result.message;
+        
+        if (result.resolvedGames > 0) {
+          message += `\n\n✅ Settled Games:`;
+          result.gameResults.forEach(game => {
+            message += `\n• ${game.game}: ${game.winners} winners, ${game.losers} losses`;
+          });
+        }
+        
+        const notificationType = result.resolvedGames > 0 ? 'success' : 'info';
+        showNotification(message, notificationType);
+        
+        setLastGamesRefresh(Date.now());
+      }
+    } catch (error) {
+      console.error('Error auto-resolving games:', error);
+    }
+    
+    // Trigger betting history refresh
+    setBetsRefreshTrigger(prev => prev + 1);
+  }, []);
 
   // Main render method
   return (
@@ -773,52 +550,47 @@ function App() {
                         
                         {!expandedBets[game.id] ? (
                           // Show odds and bet buttons for team selection
-                        <div className="odds-display">
-                          {game.odds && game.odds.length > 0 && (
-                              <div className="team-betting-options">
-                                <button 
-                                  className="team-bet-button home-team"
-                                  onClick={() => {
-                                    setSelectedTeam(game.homeTeam);
-                                    setExpandedBets(prev => ({ ...prev, [game.id]: true }));
-                                  }}
-                                >
-                                  <div className="team-info">
-                                    <span className="team-name">{game.homeTeam}</span>
-                                    <span className="odds">
-                                      {(() => {
-                                        // Find odds by team name instead of assuming array position
-                                        const homeOdds = game.odds.find(odd => odd.name === game.homeTeam);
-                                        const oddsValue = homeOdds?.price;
-                                        console.log(`🏠 Home team ${game.homeTeam}: odds = ${oddsValue}, full odds array:`, game.odds);
-                                        return oddsValue ? `${oddsValue > 0 ? '+' : ''}${oddsValue}` : 'N/A';
-                                      })()}
-                                    </span>
-                                  </div>
-                                </button>
-                                <button 
-                                  className="team-bet-button away-team"
-                                  onClick={() => {
-                                    setSelectedTeam(game.awayTeam);
-                                    setExpandedBets(prev => ({ ...prev, [game.id]: true }));
-                                  }}
-                                >
-                                  <div className="team-info">
-                                    <span className="team-name">{game.awayTeam}</span>
-                                    <span className="odds">
-                                      {(() => {
-                                        // Find odds by team name instead of assuming array position
-                                        const awayOdds = game.odds.find(odd => odd.name === game.awayTeam);
-                                        const oddsValue = awayOdds?.price;
-                                        return oddsValue ? `${oddsValue > 0 ? '+' : ''}${oddsValue}` : 'N/A';
-                                      })()}
-                                    </span>
-                                  </div>
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
+                          <div className="odds-display">
+                              <div className="teams-grid">
+                              <button 
+                                className="team-bet-button home-team"
+                                onClick={() => {
+                                  setSelectedTeam(game.homeTeam);
+                                  setExpandedBets(prev => ({ ...prev, [game.id]: true }));
+                                }}
+                              >
+                                <div className="team-info">
+                                  <span className="team-name">{game.homeTeam}</span>
+                                  <span className="odds">
+                                    {(() => {
+                                      const homeOdds = game.odds.find(odd => odd.name === game.homeTeam);
+                                      const oddsValue = homeOdds?.price;
+                                      return oddsValue ? `${oddsValue > 0 ? '+' : ''}${oddsValue}` : 'N/A';
+                                    })()}
+                                  </span>
+                                </div>
+                              </button>
+                              <button 
+                                className="team-bet-button away-team"
+                                onClick={() => {
+                                  setSelectedTeam(game.awayTeam);
+                                  setExpandedBets(prev => ({ ...prev, [game.id]: true }));
+                                }}
+                              >
+                                <div className="team-info">
+                                  <span className="team-name">{game.awayTeam}</span>
+                                  <span className="odds">
+                                    {(() => {
+                                      const awayOdds = game.odds.find(odd => odd.name === game.awayTeam);
+                                      const oddsValue = awayOdds?.price;
+                                      return oddsValue ? `${oddsValue > 0 ? '+' : ''}${oddsValue}` : 'N/A';
+                                    })()}
+                                  </span>
+                                </div>
+                              </button>
+                            </div>
+                            </div>
+                          ) : (
                           // Show betting amount selection
                           <div className="betting-options">
                             <div className="selected-team">
