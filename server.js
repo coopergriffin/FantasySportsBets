@@ -1484,21 +1484,13 @@ app.get('/bets/:userId', authenticateToken, (req, res) => {
             }
             console.log('Bets found:', rows ? rows.length : 0);
                 
-                // Process bets and format timestamps
+                // Return raw UTC timestamps - let frontend handle all timezone conversion
                 const processedBets = rows.map(bet => {
-                    const formattedCreatedAt = formatTimestampForUser(bet.created_at, userTimezone);
-                    const formattedStatusChangedAt = bet.status_changed_at ? 
-                        formatTimestampForUser(bet.status_changed_at, userTimezone) : null;
-                                    // Don't format game_date on backend - let frontend handle all timezone conversion
-                const formattedGameDate = null;
-
                     return {
                         ...bet,
-                        status: bet.status || bet.outcome || 'pending',
-                        created_at_formatted: formattedCreatedAt,
-                        status_changed_at_formatted: formattedStatusChangedAt,
-                        game_date_formatted: formattedGameDate,
-                        user_timezone: userTimezone
+                        status: bet.status || bet.outcome || 'pending'
+                        // All timestamps (created_at, status_changed_at, game_date) are returned as raw UTC
+                        // Frontend will handle timezone conversion for display
                     };
                 });
                 
@@ -2303,159 +2295,8 @@ app.post('/api/clear-betting-data', authenticateToken, (req, res) => {
     });
 });
 
-/**
- * Enhanced timezone-aware timestamp formatter
- * Handles all edge cases: DST transitions, vacation travel, invalid timezones
- * @param {string} utcTimestamp - UTC timestamp from database
- * @param {string} timezone - User's timezone (e.g., 'America/New_York')
- * @returns {Object} Formatted date information with error handling
- */
-const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
-    if (!utcTimestamp) return null;
-    
-    try {
-        // Handle different input formats robustly - ALWAYS treat as UTC
-        let date;
-        if (typeof utcTimestamp === 'string') {
-            // If it's already an ISO string (2025-06-25T17:00:20.265Z), use directly
-            if (utcTimestamp.includes('T') && (utcTimestamp.endsWith('Z') || utcTimestamp.includes('+'))) {
-                date = new Date(utcTimestamp);
-            }
-            // If it's SQLite UTC format (2025-06-25 17:00:20), treat as UTC
-            else if (utcTimestamp.match(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/)) {
-                date = new Date(utcTimestamp + ' UTC');
-            }
-            // For any other format, try to parse and assume UTC
-            else {
-                date = new Date(utcTimestamp);
-            }
-        } else {
-            date = new Date(utcTimestamp);
-        }
-        
-        // Validate the date object
-        if (isNaN(date.getTime())) {
-            console.error('❌ Invalid date format:', utcTimestamp);
-            return { 
-                utc: utcTimestamp, 
-                local: 'Invalid Date', 
-                date: 'Invalid Date', 
-                time: 'Invalid Time', 
-                timezone: timezone,
-                error: 'Invalid date format'
-            };
-        }
-        
-        // Validate timezone - use fallback if invalid
-        let validTimezone = timezone;
-        try {
-            // Test if timezone is valid by attempting to format
-            new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(date);
-        } catch (tzError) {
-            console.warn(`⚠️  Invalid timezone "${timezone}", falling back to America/Toronto`);
-            validTimezone = 'America/Toronto';
-        }
-        
-        // Format with comprehensive options for maximum compatibility
-        const options = {
-            timeZone: validTimezone,
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: 'numeric',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: true,
-            // This ensures DST is handled automatically
-            timeZoneName: 'short'
-        };
-        
-        const formatter = new Intl.DateTimeFormat('en-US', options);
-        const parts = formatter.formatToParts(date);
-        
-        const formatted = parts.reduce((acc, part) => {
-            acc[part.type] = part.value;
-            return acc;
-        }, {});
-        
-        // Get timezone info for debugging/display
-        const tzInfo = {
-            name: validTimezone,
-            abbreviation: formatted.timeZoneName || 'Unknown',
-            offset: -date.getTimezoneOffset() / 60 // Convert to hours from UTC
-        };
-        
-        return {
-            utc: utcTimestamp,
-            local: `${formatted.year}-${formatted.month}-${formatted.day} ${formatted.hour}:${formatted.minute}:${formatted.second} ${formatted.dayPeriod}`,
-            date: `${formatted.month}/${formatted.day}/${formatted.year}`,
-            time: `${formatted.hour}:${formatted.minute} ${formatted.dayPeriod}`,
-            fullTime: `${formatted.hour}:${formatted.minute}:${formatted.second} ${formatted.dayPeriod}`,
-            timezone: validTimezone,
-            timezoneInfo: tzInfo,
-            // For debugging - shows actual timezone at time of formatting
-            debugInfo: {
-                inputFormat: typeof utcTimestamp,
-                parsedUTC: date.toISOString(),
-                userTimezoneOffset: -date.getTimezoneOffset() / 60,
-                isDST: isDaylightSavingTime(date, validTimezone)
-            }
-        };
-    } catch (error) {
-        console.error('❌ Error formatting timestamp:', error);
-        return { 
-            utc: utcTimestamp, 
-            local: 'Format Error', 
-            date: 'Error', 
-            time: 'Error', 
-            timezone: timezone,
-            error: error.message 
-        };
-    }
-};
-
-/**
- * Helper function to detect if a date is in Daylight Saving Time
- * Useful for debugging timezone issues
- * @param {Date} date - Date to check
- * @param {string} timezone - Timezone to check
- * @returns {boolean} True if DST is active
- */
-const isDaylightSavingTime = (date, timezone) => {
-    try {
-        // Get timezone offset in January (standard time) and July (likely DST)
-        const jan = new Date(date.getFullYear(), 0, 1);
-        const jul = new Date(date.getFullYear(), 6, 1);
-        
-        const janFormatter = new Intl.DateTimeFormat('en', {
-            timeZone: timezone,
-            timeZoneName: 'short'
-        });
-        const julFormatter = new Intl.DateTimeFormat('en', {
-            timeZone: timezone,
-            timeZoneName: 'short'
-        });
-        
-        const janTz = janFormatter.formatToParts(jan).find(part => part.type === 'timeZoneName')?.value;
-        const julTz = julFormatter.formatToParts(jul).find(part => part.type === 'timeZoneName')?.value;
-        
-        // If timezone names are different, DST exists in this timezone
-        if (janTz !== julTz) {
-            const currentFormatter = new Intl.DateTimeFormat('en', {
-                timeZone: timezone,
-                timeZoneName: 'short'
-            });
-            const currentTz = currentFormatter.formatToParts(date).find(part => part.type === 'timeZoneName')?.value;
-            
-            // Typically, DST timezone name will be different from standard time
-            return currentTz === julTz && julTz !== janTz;
-        }
-        
-        return false;
-    } catch (error) {
-        return false;
-    }
-};
+// Server-side timestamp formatting removed - all timezone conversion now handled in frontend
+// Backend only works with UTC timestamps for all logic and storage
 
 // Start the server
 app.listen(PORT, () => {

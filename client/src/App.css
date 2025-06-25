@@ -1026,4 +1026,181 @@
   }
 }
 
+/* ===== FOOTER STYLES ===== */
+.app-footer {
+  background: linear-gradient(135deg, #1a1a1a, #0f0f0f);
+  color: #fff;
+  padding: 2rem 0 1rem 0;
+  margin-top: 3rem;
+  border-top: 3px solid #646cff;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.footer-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 2rem;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2rem;
+}
+
+.footer-section h3 {
+  color: #646cff;
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  text-shadow: 0 2px 4px rgba(100, 108, 255, 0.3);
+}
+
+.footer-section h4 {
+  color: #fff;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid #4a4a4a;
+  padding-bottom: 0.25rem;
+}
+
+.footer-section p {
+  color: #b0b0b0;
+  line-height: 1.6;
+  font-size: 0.95rem;
+}
+
+.footer-section ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.footer-section li {
+  margin-bottom: 0.5rem;
+  transition: all 0.3s ease;
+}
+
+.footer-section li:hover {
+  transform: translateX(5px);
+}
+
+.footer-section a {
+  color: #b0b0b0;
+  text-decoration: none;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+}
+
+.footer-section a:hover {
+  color: #646cff;
+  text-shadow: 0 1px 3px rgba(100, 108, 255, 0.5);
+}
+
+.footer-section a:hover::before {
+  content: '→ ';
+  margin-right: 0.5rem;
+  color: #646cff;
+}
+
+.footer-bottom {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #4a4a4a;
+  text-align: center;
+}
+
+.footer-disclaimer {
+  margin-bottom: 1rem;
+}
+
+.footer-disclaimer p {
+  background: linear-gradient(135deg, #ff9800, #f57c00);
+  color: #fff;
+  padding: 1rem;
+  border-radius: 8px;
+  margin: 0 auto;
+  max-width: 800px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(255, 152, 0, 0.3);
+}
+
+.footer-credits {
+  color: #90a4ae;
+  font-size: 0.9rem;
+}
+
+.footer-credits p {
+  margin: 0;
+  padding: 0 2rem;
+}
+
+/* Footer responsive design */
+@media (max-width: 1024px) {
+  .footer-content {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-footer {
+    padding: 1.5rem 0 1rem 0;
+    margin-top: 2rem;
+  }
+  
+  .footer-content {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+    padding: 0 1rem;
+  }
+  
+  .footer-section h3 {
+    font-size: 1.3rem;
+    text-align: center;
+  }
+  
+  .footer-section h4 {
+    font-size: 1.1rem;
+    text-align: center;
+  }
+  
+  .footer-section ul {
+    text-align: center;
+  }
+  
+  .footer-disclaimer p {
+    font-size: 0.9rem;
+    padding: 0.8rem;
+  }
+  
+  .footer-credits p {
+    font-size: 0.8rem;
+    padding: 0 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .footer-content {
+    padding: 0 0.5rem;
+  }
+  
+  .footer-section h3 {
+    font-size: 1.2rem;
+  }
+  
+  .footer-section h4 {
+    font-size: 1rem;
+  }
+  
+  .footer-disclaimer p {
+    font-size: 0.8rem;
+    padding: 0.6rem;
+  }
+  
+  .footer-credits p {
+    font-size: 0.7rem;
+  }
+}
+
 

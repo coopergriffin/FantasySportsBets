@@ -18,6 +18,7 @@ import AdComponent from './components/AdComponent'; // Advertisement component
 import { fetchOdds, placeBet as placeBetApi, resolveCompletedGames, updateUserTimezone } from "./api"; // API communication functions
 import { formatTimeForDisplay } from "./utils/timeUtils"; // Time formatting utilities
 import { calculateWinnings, formatOdds } from "./utils/oddsUtils"; // Odds calculation utilities
+import OddsChangeModal from './components/OddsChangeModal'; // Odds change confirmation modal
 import "./App.css"; // Component styles
 
 function App() {
@@ -48,6 +49,17 @@ function App() {
   const [gamesRefreshTrigger, setGamesRefreshTrigger] = useState(0); // Force games refresh
   const [isRefreshingGames, setIsRefreshingGames] = useState(false); // Games refresh loading state
   const [lastGamesRefresh, setLastGamesRefresh] = useState(null); // Track last games refresh time
+
+  // Odds change modal state
+  const [oddsChangeModal, setOddsChangeModal] = useState({
+    visible: false,
+    message: '',
+    originalOdds: null,
+    currentOdds: null,
+    difference: null,
+    betData: null,
+    isConfirming: false
+  });
 
   // Constants
   const SPORTS = [
@@ -249,14 +261,15 @@ function App() {
         return;
       }
 
-             const betData = {
+      const betData = {
          gameId: game.id,
+         game: `${game.homeTeam} vs ${game.awayTeam}`,
          team: selectedTeam,
          amount: betAmount,
          odds: selectedOdds,
          homeTeam: game.homeTeam,
          awayTeam: game.awayTeam,
-         startTime: game.startTime,
+         game_date: game.commenceTime,
          sport: game.sport
        };
 
@@ -281,13 +294,105 @@ function App() {
         
         // Refresh betting history
         setBetsRefreshTrigger(prev => prev + 1);
+      } else if (response.oddsChanged) {
+        // Handle odds change - show modal for user confirmation
+        setOddsChangeModal({
+          visible: true,
+          message: response.message,
+          originalOdds: response.originalOdds,
+          currentOdds: response.currentOdds,
+          difference: response.difference,
+          betData: betData,
+          isConfirming: false
+        });
       } else {
-        showNotification(response.error || 'Failed to place bet', 'error');
+        showNotification(response.error || response.message || 'Failed to place bet', 'error');
       }
     } catch (error) {
       console.error('Error placing bet:', error);
       showNotification('Error placing bet: ' + error.message, 'error');
     }
+  };
+
+  /**
+   * Handles confirming bet with updated odds from the modal
+   */
+  const handleConfirmOddsChange = async () => {
+    const { betData, currentOdds } = oddsChangeModal;
+    
+    setOddsChangeModal(prev => ({ ...prev, isConfirming: true }));
+    
+    try {
+      // Place bet with confirmed odds using the special endpoint
+      const confirmResponse = await fetch('http://localhost:5000/api/bets/confirm-odds', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          game: betData.game,
+          team: betData.team,
+          amount: betData.amount,
+          confirmedOdds: currentOdds,
+          sport: betData.sport,
+          game_date: betData.game_date
+        })
+      });
+      
+      const confirmResult = await confirmResponse.json();
+      
+      if (confirmResult.success) {
+        showNotification(
+          `✅ Bet placed with updated odds! $${betData.amount} on ${betData.team} at ${currentOdds}`, 
+          'success'
+        );
+        
+        // Update user balance
+        setUser(prev => ({ ...prev, balance: confirmResult.newBalance }));
+        
+        // Reset betting form
+        setSelectedTeam(null);
+        setSelectedAmount(null);
+        setCustomAmount('');
+        setExpandedBets({});
+        
+        // Refresh betting history
+        setBetsRefreshTrigger(prev => prev + 1);
+      } else {
+        showNotification(confirmResult.message || 'Failed to place bet with updated odds', 'error');
+      }
+    } catch (confirmError) {
+      console.error('Error confirming bet with updated odds:', confirmError);
+      showNotification('Error confirming bet: ' + confirmError.message, 'error');
+    } finally {
+      // Close modal
+      setOddsChangeModal({
+        visible: false,
+        message: '',
+        originalOdds: null,
+        currentOdds: null,
+        difference: null,
+        betData: null,
+        isConfirming: false
+      });
+    }
+  };
+
+  /**
+   * Handles canceling the odds change confirmation
+   */
+  const handleCancelOddsChange = () => {
+    setOddsChangeModal({
+      visible: false,
+      message: '',
+      originalOdds: null,
+      currentOdds: null,
+      difference: null,
+      betData: null,
+      isConfirming: false
+    });
+    showNotification('Bet cancelled due to odds change', 'info');
   };
 
   /**
@@ -516,7 +621,7 @@ function App() {
 
                     {lastGamesRefresh && (
                       <span className="last-refresh">
-                        Last activity: {new Date(lastGamesRefresh).toLocaleTimeString()}
+                        Last refresh: {new Date(lastGamesRefresh).toLocaleTimeString()}
                       </span>
                     )}
                   </div>
@@ -551,7 +656,7 @@ function App() {
                         {!expandedBets[game.id] ? (
                           // Show odds and bet buttons for team selection
                           <div className="odds-display">
-                              <div className="teams-grid">
+                            <div className="teams-grid">
                               <button 
                                 className="team-bet-button home-team"
                                 onClick={() => {
@@ -589,8 +694,8 @@ function App() {
                                 </div>
                               </button>
                             </div>
-                            </div>
-                          ) : (
+                          </div>
+                        ) : (
                           // Show betting amount selection
                           <div className="betting-options">
                             <div className="selected-team">
@@ -707,8 +812,8 @@ function App() {
                                 Cancel
                               </button>
                             </div>
-                            </div>
-                          )}
+                          </div>
+                        )}
                       </div>
                     ))
                   )}
@@ -733,11 +838,75 @@ function App() {
                   onClearData={handleClearBettingData}
                   userTimezone={user?.timezone || 'America/Toronto'}
                 />
+
+                {/* Advertisement banner after betting panel */}
+                <AdComponent placement="banner" />
+
+                {/* Professional Footer */}
+                <footer className="app-footer">
+                  <div className="footer-content">
+                    <div className="footer-section">
+                      <h3>🏆 Fantasy Sports Central</h3>
+                      <p>Your premier destination for fantasy sports betting with real-time odds and instant payouts.</p>
+                    </div>
+                    
+                    <div className="footer-section">
+                      <h4>Quick Links</h4>
+                      <ul>
+                        <li><a href="#games">Live Games</a></li>
+                        <li><a href="#leaderboard" onClick={() => setShowLeaderboard(true)}>Leaderboard</a></li>
+                        <li><a href="#history">Betting History</a></li>
+                        <li><a href="#account">Account Settings</a></li>
+                      </ul>
+                    </div>
+
+                    <div className="footer-section">
+                      <h4>Sports Coverage</h4>
+                      <ul>
+                        <li>🏈 NFL</li>
+                        <li>🏀 NBA</li>
+                        <li>⚾ MLB</li>
+                        <li>🏒 NHL</li>
+                      </ul>
+                    </div>
+
+                    <div className="footer-section">
+                      <h4>Support</h4>
+                      <ul>
+                        <li><a href="#help">Help Center</a></li>
+                        <li><a href="#contact">Contact Support</a></li>
+                        <li><a href="#responsible">Responsible Gaming</a></li>
+                        <li><a href="#privacy">Privacy Policy</a></li>
+                      </ul>
+                    </div>
+                  </div>
+                  
+                  <div className="footer-bottom">
+                    <div className="footer-disclaimer">
+                      <p>⚠️ <strong>Fantasy Sports Only:</strong> This platform is for fantasy sports entertainment. Must be 18+ to participate.</p>
+                    </div>
+                    <div className="footer-credits">
+                      <p>&copy; 2024 Fantasy Sports Central. All rights reserved. | Odds powered by The Odds API</p>
+                    </div>
+                  </div>
+                </footer>
               </>
             )}
           </MainLayout>
         </div>
       )}
+
+      {/* Odds Change Confirmation Modal */}
+      <OddsChangeModal
+        isVisible={oddsChangeModal.visible}
+        message={oddsChangeModal.message}
+        originalOdds={oddsChangeModal.originalOdds}
+        currentOdds={oddsChangeModal.currentOdds}
+        difference={oddsChangeModal.difference}
+        onConfirm={handleConfirmOddsChange}
+        onCancel={handleCancelOddsChange}
+        isLoading={oddsChangeModal.isConfirming}
+      />
 
       {/* Global Notification Component */}
       <Notification

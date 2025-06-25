@@ -262,9 +262,12 @@ function BettingPanel({ userId, refreshTrigger, onBetSold, onRefreshBets, onClea
                 }
               })()}
             </span>
-            {bet.status_changed_at_formatted && !isPending && (
+            {bet.status_changed_at && !isPending && (
               <span className="bet-status-changed">
-                {betStatus.charAt(0).toUpperCase() + betStatus.slice(1)}: {bet.status_changed_at_formatted.date} at {bet.status_changed_at_formatted.time} ({bet.status_changed_at_formatted.timezone})
+                {betStatus.charAt(0).toUpperCase() + betStatus.slice(1)}: {(() => {
+                  const formatted = formatTimeForDisplay(bet.status_changed_at, userTimezone);
+                  return formatted ? `${formatted.date} at ${formatted.time} (${formatted.timezone})` : 'Unknown time';
+                })()}
               </span>
             )}
             {!isPending && bet.final_amount !== null && bet.profit_loss !== null && (

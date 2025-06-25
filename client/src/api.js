@@ -152,14 +152,21 @@ export const placeBet = async (betData) => {
       body: JSON.stringify(betData)
     });
 
+    const data = await response.json();
+
     if (!response.ok) {
-      const error = await response.json();
-      const errorObj = new Error(error.message || 'Failed to place bet');
-      errorObj.details = error; // Pass through all error details
+      // Special case: if it's an odds change, return the data instead of throwing
+      if (data.oddsChanged) {
+        return data; // Return the odds change data for the frontend to handle
+      }
+      
+      // For other errors, throw as before
+      const errorObj = new Error(data.message || 'Failed to place bet');
+      errorObj.details = data; // Pass through all error details
       throw errorObj;
     }
 
-    return await response.json();
+    return data;
   } catch (error) {
     console.error('Error placing bet:', error);
     throw error;
