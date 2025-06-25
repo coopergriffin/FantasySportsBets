@@ -48,6 +48,7 @@ function App() {
   const [gamesRefreshTrigger, setGamesRefreshTrigger] = useState(0); // Force games refresh
   const [isRefreshingGames, setIsRefreshingGames] = useState(false); // Games refresh loading state
   const [lastGamesRefresh, setLastGamesRefresh] = useState(null); // Track last games refresh time
+  const [lastAutoResolve, setLastAutoResolve] = useState(null); // Track last auto-resolve to prevent spam
 
   // Constants
   const SPORTS = [
@@ -58,6 +59,61 @@ function App() {
   ];
 
   const BET_AMOUNTS = [5, 25, 50, 100];
+
+  /**
+   * Effect hook to check for existing user session on app load
+   * Includes security measures for token validation and cleanup
+   */
+  useEffect(() => {
+    const checkExistingSession = async () => {
+      const token = localStorage.getItem('token');
+      if (token && !user) {
+        try {
+          const response = await fetch('http://localhost:5000/user', {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            credentials: 'include'
+          });
+
+          if (response.ok) {
+            const userData = await response.json();
+            setUser(userData);
+            console.log('Restored user session:', userData.username);
+            
+            // Set up auto-logout timer for security (logout after 2 hours of inactivity)
+            let inactivityTimer;
+            const resetTimer = () => {
+              clearTimeout(inactivityTimer);
+              inactivityTimer = setTimeout(() => {
+                console.log('Auto-logout due to inactivity');
+                handleLogout();
+                showNotification('Logged out due to inactivity for security', 'warning');
+              }, 2 * 60 * 60 * 1000); // 2 hours
+            };
+            
+            // Reset timer on user activity
+            const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+            events.forEach(event => {
+              document.addEventListener(event, resetTimer, true);
+            });
+            
+            resetTimer(); // Start the timer
+          } else {
+            // Invalid token, remove it
+            localStorage.removeItem('token');
+            console.log('Removed invalid token from localStorage');
+          }
+        } catch (error) {
+          console.error('Error checking existing session:', error);
+          localStorage.removeItem('token');
+        }
+      }
+    };
+
+    checkExistingSession();
+  }, []); // Run only once on component mount
 
   /**
    * Shows a notification message
@@ -92,8 +148,15 @@ function App() {
         // Auto-refresh betting history and check for completed games when user enters page
         setBetsRefreshTrigger(prev => prev + 1);
         
+<<<<<<< HEAD
         // Auto-check for completed games using real API data
         handleRefreshBets();
+=======
+        // Auto-resolve completed games when user loads/returns to main screen
+        setTimeout(() => {
+          autoResolveGames();
+        }, 2000); // Small delay to allow everything to load first
+>>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
       } catch (error) {
         console.error('Error fetching odds:', error);
         setError('Failed to fetch odds');
@@ -197,6 +260,11 @@ function App() {
     localStorage.setItem('token', response.token);
     setUser(response.user);
     // Betting history refresh now happens in useEffect when user is set
+    
+    // Auto-resolve completed games when user logs in
+    setTimeout(() => {
+      autoResolveGames();
+    }, 1000); // Small delay to allow user state to fully set
   };
 
   /**
@@ -431,6 +499,58 @@ function App() {
   };
 
   /**
+   * Auto-resolves completed games silently in the background
+   * Called automatically when user logs in or returns to the main screen
+   * Includes throttling to prevent excessive API calls
+   */
+  const autoResolveGames = async () => {
+    try {
+      // Throttle auto-resolve to prevent excessive API calls (max once every 10 minutes)
+      const now = Date.now();
+      const tenMinutesAgo = now - (10 * 60 * 1000);
+      
+      if (lastAutoResolve && lastAutoResolve > tenMinutesAgo) {
+        console.log('⏸️  Auto-resolve skipped - too recent (within 10 minutes)');
+        return;
+      }
+      
+      console.log('🔄 Auto-resolving completed games in background...');
+      setLastAutoResolve(now);
+      
+      const result = await resolveCompletedGames();
+      
+      if (result.success && result.resolvedGames > 0) {
+        // Update user balance after resolving games
+        const response = await fetch('http://localhost:5000/user', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include'
+        });
+
+        if (response.ok) {
+          const userData = await response.json();
+          setUser(userData);
+        }
+
+        // Show a subtle success notification
+        const message = `🎯 ${result.resolvedGames} completed games resolved automatically!`;
+        showNotification(message, 'success');
+        
+        // Update last refresh timestamp so user can see when auto-resolution happened
+        setLastGamesRefresh(now);
+        
+        // Trigger betting history refresh to show updated statuses
+        setBetsRefreshTrigger(prev => prev + 1);
+      }
+    } catch (error) {
+      console.error('Error auto-resolving games:', error);
+      // Fail silently - don't disrupt user experience
+    }
+  };
+
+  /**
    * Refreshes betting history and auto-resolves completed games
    * Called when user manually refreshes or after significant actions
    */
@@ -460,6 +580,7 @@ function App() {
         // Build comprehensive status message for user transparency
         let message = result.message;
         
+<<<<<<< HEAD
         if (result.resolvedGames > 0) {
           message += `\n\n✅ Settled Games:`;
           result.gameResults.forEach(game => {
@@ -486,6 +607,12 @@ function App() {
                                result.failedChecks?.length > 0 ? 'warning' : 'info';
         
         showNotification(message, notificationType);
+=======
+        showNotification(message, 'success');
+        
+        // Update last refresh timestamp when manual resolution happens
+        setLastGamesRefresh(Date.now());
+>>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
       }
     } catch (error) {
       console.error('Error auto-resolving games:', error);
@@ -612,7 +739,7 @@ function App() {
 
                     {lastGamesRefresh && (
                       <span className="last-refresh">
-                        Last refreshed: {new Date(lastGamesRefresh).toLocaleTimeString()}
+                        Last activity: {new Date(lastGamesRefresh).toLocaleTimeString()}
                       </span>
                     )}
                   </div>

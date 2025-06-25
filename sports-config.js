@@ -154,15 +154,24 @@ function normalizeTeamName(teamName, sportCode) {
 /**
  * Validate if betting is allowed for a game based on start time
  * @param {string} gameDate - Game start time in ISO format
+<<<<<<< HEAD
  * @param {string} sportCode - Sport code (not used anymore, kept for compatibility)
+=======
+ * @param {string} sportCode - Sport code to get specific cutoff (unused now)
+>>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
  * @returns {boolean} True if betting is allowed (game hasn't started yet)
  */
 function isBettingAllowed(gameDate, sportCode) {
     const gameTime = new Date(gameDate);
     const now = new Date();
     
+<<<<<<< HEAD
     // Only check if game has actually started - no artificial cutoff
     // User can bet right up until game starts as long as we can get fresh odds
+=======
+    // Only prevent betting if the game has actually started
+    // Allow betting right up until game time
+>>>>>>> 92c22fc40e42fe6c8c610c3fe838c123c61284a0
     return gameTime > now;
 }
 
