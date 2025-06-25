@@ -78,13 +78,6 @@ function AdComponent({ placement = 'sidebar', className = '' }) {
     return null;
   }
 
-  // Get placement-specific styling
-  const getAdSize = () => {
-    const size = adConfig.placements[placement]?.size || '300x250';
-    const [width, height] = size.split('x');
-    return { width: `${width}px`, height: `${height}px` };
-  };
-
   return (
     <div className={`ad-component ad-${placement} ${className}`}>
       {adConfig.developmentMode && (
@@ -93,7 +86,6 @@ function AdComponent({ placement = 'sidebar', className = '' }) {
       
       <div 
         className="ad-content"
-        style={getAdSize()}
         onClick={handleAdClick}
       >
         <div className="ad-image">

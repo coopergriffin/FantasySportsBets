@@ -4,6 +4,14 @@
   padding: 0;
   text-align: center;
   min-height: 100vh;
+  background-color: #d6e4fc;
+}
+
+/* Automatic dark mode based on system preferences */
+@media (prefers-color-scheme: dark) {
+  #root {
+    background-color: #1e1e1e;
+  }
 }
 
 .auth-container {
@@ -606,6 +614,90 @@
   transform: translateY(-1px);
 }
 
+/* Selected Team Odds Display */
+.selected-team-odds {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding: 0.75rem 1rem;
+  background: rgba(100, 108, 255, 0.1);
+  border: 1px solid rgba(100, 108, 255, 0.3);
+  border-radius: 8px;
+}
+
+.selected-team-odds .odds-label {
+  color: #fff;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.selected-team-odds .odds-value {
+  color: #4caf50;
+  font-weight: 800;
+  font-size: 1.2rem;
+  background: rgba(76, 175, 80, 0.15);
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid rgba(76, 175, 80, 0.4);
+}
+
+/* Potential Winnings Display */
+.potential-winnings {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: linear-gradient(135deg, rgba(76, 175, 80, 0.1), rgba(76, 175, 80, 0.05));
+  border: 1px solid rgba(76, 175, 80, 0.2);
+  border-radius: 10px;
+}
+
+.winnings-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.bet-amount-display,
+.potential-profit,
+.total-payout {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+}
+
+.bet-amount-display {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 0.75rem;
+}
+
+.total-payout {
+  border-top: 1px solid rgba(76, 175, 80, 0.3);
+  padding-top: 0.75rem;
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.potential-winnings .label {
+  color: #e0e0e0;
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
+.potential-winnings .value {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.potential-winnings .value.profit {
+  color: #4caf50;
+}
+
+.potential-winnings .value.total {
+  color: #81c784;
+  font-size: 1.1rem;
+}
+
 .bet-amounts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
@@ -933,3 +1025,5 @@
     font-size: 1rem;
   }
 }
+
+

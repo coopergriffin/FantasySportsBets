@@ -154,18 +154,16 @@ function normalizeTeamName(teamName, sportCode) {
 /**
  * Validate if betting is allowed for a game based on start time
  * @param {string} gameDate - Game start time in ISO format
- * @param {string} sportCode - Sport code to get specific cutoff
- * @returns {boolean} True if betting is allowed
+ * @param {string} sportCode - Sport code (not used anymore, kept for compatibility)
+ * @returns {boolean} True if betting is allowed (game hasn't started yet)
  */
 function isBettingAllowed(gameDate, sportCode) {
     const gameTime = new Date(gameDate);
     const now = new Date();
-    const minutesUntilGame = (gameTime - now) / (1000 * 60);
     
-    const config = SPORTS_CONFIG[sportCode];
-    const cutoffMinutes = config ? config.minBetCutoff : 15;
-    
-    return minutesUntilGame > cutoffMinutes;
+    // Only check if game has actually started - no artificial cutoff
+    // User can bet right up until game starts as long as we can get fresh odds
+    return gameTime > now;
 }
 
 module.exports = {

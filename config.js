@@ -11,7 +11,12 @@ require('dotenv').config();
 // Log environment variables (without exposing sensitive data)
 console.log('Loading configuration...');
 console.log('Environment variables loaded:', {
+  ODDS_API_KEY_1_SET: !!process.env.ODDS_API_KEY_1,
   ODDS_API_KEY_SET: !!process.env.ODDS_API_KEY,
+  ODDS_API_KEY_2_SET: !!process.env.ODDS_API_KEY_2,
+  ODDS_API_KEY_3_SET: !!process.env.ODDS_API_KEY_3,
+  ODDS_API_KEY_4_SET: !!process.env.ODDS_API_KEY_4,
+  ODDS_API_KEY_5_SET: !!process.env.ODDS_API_KEY_5,
   NODE_ENV: process.env.NODE_ENV || 'development'
 });
 
@@ -32,6 +37,7 @@ const config = {
     odds: {
       apiKeys: [
         process.env.ODDS_API_KEY,
+        process.env.ODDS_API_KEY_1,
         process.env.ODDS_API_KEY_2,
         process.env.ODDS_API_KEY_3,
         process.env.ODDS_API_KEY_4,

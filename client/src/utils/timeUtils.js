@@ -40,7 +40,7 @@ export const formatTimeForDisplay = (utcTimestamp, timezone = 'America/Toronto')
       date: formattedDate,
       time: formattedTime,
       timezone: shortTimezone,
-      full: `${formattedDate} at ${formattedTime} (${shortTimezone})`
+      full: `${formattedDate} at ${formattedTime} ${shortTimezone}`
     };
   } catch (error) {
     console.error('Error formatting time:', error);

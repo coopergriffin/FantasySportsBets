@@ -17,7 +17,7 @@ import { getSellQuote } from '../api';
 import { formatTimeForDisplay } from '../utils/timeUtils';
 import './BettingPanel.css';
 
-function BettingPanel({ userId, refreshTrigger, onBetSold, onRefreshBets, userTimezone = 'America/Toronto' }) {
+function BettingPanel({ userId, refreshTrigger, onBetSold, onRefreshBets, onClearData, userTimezone = 'America/Toronto' }) {
   // Component state
   const [allBets, setAllBets] = useState([]); // Array of all user's bets
   const [activeBets, setActiveBets] = useState([]); // Array of pending bets
@@ -244,9 +244,12 @@ function BettingPanel({ userId, refreshTrigger, onBetSold, onRefreshBets, userTi
             {bet.team && (
               <span className="bet-team">Team: {bet.team}</span>
             )}
-            {bet.game_date_formatted && (
+            {bet.game_date && (
               <span className="bet-date">
-                Game: {bet.game_date_formatted.date} at {bet.game_date_formatted.time} ({bet.game_date_formatted.timezone})
+                Game: {(() => {
+                  const formatted = formatTimeForDisplay(bet.game_date, userTimezone);
+                  return formatted ? `${formatted.date} at ${formatted.time} ${formatted.timezone}` : 'Time unavailable';
+                })()}
               </span>
             )}
             <span className="bet-created">
@@ -313,12 +316,23 @@ function BettingPanel({ userId, refreshTrigger, onBetSold, onRefreshBets, userTi
         <div className="betting-section active-bets">
           <div className="betting-history-header">
             <h2>Active Bets ({activeBets.length})</h2>
-            <button 
-              className="refresh-button bets-refresh"
-              onClick={onRefreshBets}
-            >
-              📈 Refresh & Resolve Games
-            </button>
+            <div className="betting-header-buttons">
+              <button 
+                className="refresh-button bets-refresh"
+                onClick={onRefreshBets}
+              >
+                📈 Refresh & Resolve Games
+              </button>
+              {onClearData && (
+                <button 
+                  className="refresh-button clear-data-button"
+                  onClick={onClearData}
+                  style={{ backgroundColor: '#ff4444', marginLeft: '10px' }}
+                >
+                  🗑️ Clear All Data
+                </button>
+              )}
+            </div>
           </div>
           <div className="bets-list">
             {activeBets.length === 0 ? (

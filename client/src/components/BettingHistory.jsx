@@ -182,11 +182,14 @@ function BettingHistory({ userId, refreshTrigger, onBetSold, onRefreshBets, user
                   {bet.team && (
                     <span className="bet-team">Team: {bet.team}</span>
                   )}
-                  {bet.game_date_formatted && (
-                    <span className="bet-date">
-                      Game: {bet.game_date_formatted.date} at {bet.game_date_formatted.time} ({bet.game_date_formatted.timezone})
-                    </span>
-                  )}
+                              {bet.game_date && (
+              <span className="bet-date">
+                Game: {(() => {
+                  const formatted = formatTimeForDisplay(bet.game_date, userTimezone);
+                  return formatted ? `${formatted.date} at ${formatted.time} ${formatted.timezone}` : 'Time unavailable';
+                })()}
+              </span>
+            )}
                   <span className="bet-created">
                     Placed: {(() => {
                       if (bet.created_at_formatted) {
