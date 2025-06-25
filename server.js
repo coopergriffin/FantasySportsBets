@@ -1110,10 +1110,8 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
 
         // Check if betting is still allowed for this sport and game time
         if (!isBettingAllowed(game_date, sport)) {
-            const sportConfig = getSportConfig(sport);
-            const cutoffMinutes = sportConfig ? sportConfig.minBetCutoff : 15;
             return res.status(400).json({ 
-                message: `Cannot place bet - game starts in less than ${cutoffMinutes} minutes` 
+                message: `Cannot place bet - game has already started` 
             });
         }
 
@@ -1190,9 +1188,11 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
             const roundedAmount = roundToTwoDecimals(amount);
 
             // Place bet and update balance using final odds
+            // Store proper UTC timestamp in ISO format for consistent handling
+            const utcTimestamp = new Date().toISOString();
             await db.run(
-                'INSERT INTO bets (user_id, game, team, amount, odds, sport, game_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime(\'now\', \'utc\'))',
-                [userId, game, team, roundedAmount, finalOdds, sport, game_date]
+                'INSERT INTO bets (user_id, game, team, amount, odds, sport, game_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [userId, game, team, roundedAmount, finalOdds, sport, game_date, utcTimestamp]
             );
 
             await db.run(
@@ -1336,10 +1336,8 @@ app.get('/sell-quote/:betId', authenticateToken, async (req, res) => {
 
         // Check if betting is still allowed for this sport
         if (!isBettingAllowed(bet.game_date, bet.sport)) {
-            const sportConfig = getSportConfig(bet.sport);
-            const cutoffMinutes = sportConfig ? sportConfig.minBetCutoff : 15;
             return res.status(400).json({ 
-                error: `Cannot sell bet - game starts in less than ${cutoffMinutes} minutes or has already started` 
+                error: `Cannot sell bet - game has already started` 
             });
         }
 
@@ -1779,6 +1777,7 @@ app.post('/api/resolve-completed-games', authenticateToken, async (req, res) => 
                         const sportKey = getApiSportKey(sportInfo.value);
                         
                         // Fetch completed games from the API with scores
+                        const apiKeys = config.server.odds.apiKeys;
                         let gameResult = null;
                         for (let i = 0; i < apiKeys.length; i++) {
                             try {
@@ -1983,19 +1982,46 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
     if (!utcTimestamp) return null;
     
     try {
-        // Ensure the timestamp is treated as UTC
         let date;
-        if (utcTimestamp.endsWith('Z') || utcTimestamp.includes('+')) {
-            // Already has timezone info
-            date = new Date(utcTimestamp);
+        
+        if (typeof utcTimestamp === 'string') {
+            // Handle different timestamp formats more robustly
+            if (utcTimestamp.endsWith('Z')) {
+                // Already has Z suffix - it's proper UTC
+                date = new Date(utcTimestamp);
+            } else if (utcTimestamp.includes('+') || utcTimestamp.match(/-\d{2}:\d{2}$/)) {
+                // Has timezone offset like +05:00 or -04:00 
+                date = new Date(utcTimestamp);
+            } else {
+                // Plain datetime string from SQLite - ALWAYS treat as UTC
+                // SQLite format: "2025-01-24 18:07:14" or "2025-01-24T18:07:14"
+                let isoString = utcTimestamp;
+                
+                // Convert space to T if needed for proper ISO format
+                if (isoString.includes(' ') && !isoString.includes('T')) {
+                    isoString = isoString.replace(' ', 'T');
+                }
+                
+                // Add Z suffix to explicitly indicate UTC
+                if (!isoString.endsWith('Z')) {
+                    isoString += 'Z';
+                }
+                
+                date = new Date(isoString);
+                
+                // If that didn't work, try alternative parsing
+                if (isNaN(date.getTime())) {
+                    // Try parsing as UTC explicitly
+                    date = new Date(utcTimestamp + ' UTC');
+                }
+            }
         } else {
-            // Assume it's UTC and add Z suffix
-            date = new Date(utcTimestamp + 'Z');
+            date = new Date(utcTimestamp);
         }
         
         // Check if date is valid
         if (isNaN(date.getTime())) {
-            console.error('Invalid date:', utcTimestamp);
+            console.error('Invalid date after parsing:', utcTimestamp);
             return { utc: utcTimestamp, local: 'Invalid Date', date: 'Invalid Date', time: 'Invalid Time', timezone };
         }
         
@@ -2004,7 +2030,7 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
             year: 'numeric',
             month: '2-digit',
             day: '2-digit',
-            hour: '2-digit',
+            hour: 'numeric',
             minute: '2-digit',
             second: '2-digit',
             hour12: true
@@ -2018,13 +2044,32 @@ const formatTimestampForUser = (utcTimestamp, timezone = 'America/Toronto') => {
             return acc;
         }, {});
         
+        // Get the actual timezone abbreviation
+        const timezoneFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: timezone,
+            timeZoneName: 'short'
+        });
+        
+        let shortTimezone = timezone.split('/').pop() || timezone;
+        try {
+            const timezonePart = timezoneFormatter.formatToParts(date).find(part => part.type === 'timeZoneName');
+            if (timezonePart) {
+                shortTimezone = timezonePart.value;
+            }
+        } catch (e) {
+            // Fallback to simple extraction
+        }
+        
+        // Build the display time with AM/PM
+        const displayTime = `${formatted.hour}:${formatted.minute} ${formatted.dayPeriod || ''}`.trim();
+        
         return {
             utc: utcTimestamp,
-            local: `${formatted.year}-${formatted.month}-${formatted.day} ${formatted.hour}:${formatted.minute}:${formatted.second}`,
+            local: `${formatted.year}-${formatted.month}-${formatted.day} ${displayTime}`,
             date: `${formatted.month}/${formatted.day}/${formatted.year}`,
-            time: `${formatted.hour}:${formatted.minute}`, // Only hours and minutes for display
-            timezone: timezone,
-            fullTime: `${formatted.hour}:${formatted.minute}:${formatted.second}` // Full time with seconds if needed
+            time: displayTime,
+            timezone: shortTimezone,
+            fullTime: `${formatted.hour}:${formatted.minute}:${formatted.second} ${formatted.dayPeriod || ''}`.trim()
         };
     } catch (error) {
         console.error('Error formatting timestamp:', error);
