@@ -693,6 +693,24 @@ db.serialize(() => {
         )
     `);
 
+    // Create historical game results table - PERMANENT STORAGE
+    db.run(`
+        CREATE TABLE IF NOT EXISTS game_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sport TEXT NOT NULL,
+            game_date TEXT NOT NULL,
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            home_score INTEGER,
+            away_score INTEGER,
+            winner TEXT,
+            game_id TEXT,
+            completed_at DATETIME DEFAULT (datetime('now', 'utc')),
+            api_fetched_at DATETIME DEFAULT (datetime('now', 'utc')),
+            UNIQUE(sport, home_team, away_team, game_date)
+        )
+    `);
+
     // Add new columns to existing users table if they don't exist
     db.run(`
         ALTER TABLE users ADD COLUMN timezone TEXT DEFAULT 'America/Toronto'
@@ -743,6 +761,7 @@ db.serialize(() => {
     `);
 
     console.log('Connected to SQLite database.');
+    console.log('✅ Game results table ready - historical data will be stored permanently');
     console.log('Odds cache table ready');
 
     console.log('Database initialized successfully');
@@ -762,6 +781,30 @@ db.serialize(() => {
                 console.log('🔄 Fresh game data will be fetched when users request it');
             }
         });
+
+        // 🏛️ Start the automated historical data collection system
+        console.log('\n🤖 STARTING AUTOMATED HISTORICAL DATA COLLECTION');
+        console.log('==================================================');
+        
+        // Initial collection after 30 seconds (let server fully start first)
+        setTimeout(() => {
+            console.log('🚀 Running initial historical data collection...');
+            collectCompletedGamesForHistory().catch(err => 
+                console.log('Initial collection error:', err.message)
+            );
+        }, 30000);
+
+        // Schedule automatic collection every 6 hours
+        setInterval(() => {
+            console.log('\n⏰ SCHEDULED: Running automated historical data collection...');
+            collectCompletedGamesForHistory().catch(err => 
+                console.log('Scheduled collection error:', err.message)
+            );
+        }, 6 * 60 * 60 * 1000); // 6 hours = 6 * 60 * 60 * 1000 milliseconds
+
+        console.log('✅ Automated collection scheduled every 6 hours');
+        console.log('🏛️ Historical database will continuously grow to cover all past games');
+        
     }, 1000); // Small delay to ensure database is fully ready
 });
 
@@ -1895,17 +1938,19 @@ app.get('/leaderboard', authenticateToken, (req, res) => {
 });
 
 /**
- * SIMPLIFIED Auto-resolve completed games endpoint
- * Simple approach: Check ALL pending bets, see if their games are completed, settle immediately
+ * REVOLUTIONARY HYBRID Auto-resolve completed games endpoint
+ * 1. Check historical database FIRST (instant resolution for old games)
+ * 2. Fall back to API for recent games
+ * 3. Store any API results permanently for future use
  */
 app.post('/api/resolve-completed-games', authenticateToken, async (req, res) => {
     try {
-        console.log('🔍 Checking ALL pending bets for completion (no time restrictions)...');
+        console.log('🎯 Starting HYBRID bet resolution (Historical DB + API)...');
         
-        // Get ALL pending bets - check each one
+        // Get ALL pending bets - no time restrictions
         const allPendingBets = await new Promise((resolve, reject) => {
             db.all(`
-                SELECT DISTINCT game, sport, game_date 
+                SELECT id, user_id, game, team, amount, odds, sport, game_date
                 FROM bets 
                 WHERE status = 'pending'
                 ORDER BY game_date DESC
@@ -1915,349 +1960,287 @@ app.post('/api/resolve-completed-games', authenticateToken, async (req, res) => 
             });
         });
 
-        console.log(`📊 Found ${allPendingBets.length} unique games with pending bets to check...`);
+        console.log(`📊 Found ${allPendingBets.length} pending bets to resolve`);
         
-        let resolvedGames = 0;
+        if (allPendingBets.length === 0) {
+            return res.json({
+                success: true,
+                message: '✅ No pending bets to resolve',
+                resolvedGames: 0
+            });
+        }
+
+        let totalResolvedGames = 0;
+        let historicalResolutions = 0;
+        let apiResolutions = 0;
         const gameResults = [];
-        const failedChecks = [];
-        const pendingGames = [];
 
-        for (const gameInfo of allPendingBets) {
-            console.log(`⚽ Checking if game is completed: ${gameInfo.game}`);
-            
-            // CRITICAL CHECK: Never settle games that haven't started yet
-            const gameStartTime = new Date(gameInfo.game_date);
-            const now = new Date();
-            if (gameStartTime > now) {
-                console.log(`🛡️  SAFEGUARD ACTIVE: Game hasn't started yet (starts in ${Math.round((gameStartTime - now) / (1000 * 60))} minutes)`);
-                console.log(`    Game: ${gameInfo.game}`);
-                console.log(`    Scheduled: ${gameStartTime.toISOString()}`);
-                console.log(`    Current:   ${now.toISOString()}`);
-                continue; // Skip future games completely
-            }
-            
-            // Get all pending bets for this specific game
-            const gameBets = await new Promise((resolve, reject) => {
-                db.all(`
-                    SELECT id, user_id, team, amount, odds 
-                    FROM bets 
-                    WHERE game = ? AND status = 'pending'
-                `, [gameInfo.game], (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                });
-            });
+        // STEP 1: Try to resolve each bet using HISTORICAL DATABASE first
+        console.log('\n🏛️ STEP 1: Checking Historical Database...');
+        const unresolvedBets = [];
 
-            if (gameBets.length === 0) continue; // No bets to settle
-
-            // Try to get actual game results from API
-            let gameWinner = null;
-            let actualScore = null;
+        for (const bet of allPendingBets) {
+            console.log(`🔍 Checking historical data for: ${bet.game}`);
             
-            try {
-                // Parse team names from game string
-                const gameMatch = gameInfo.game.match(/^(.+?) vs (.+?)$/);
-                if (!gameMatch) {
-                    console.log(`❌ Cannot parse team names from: ${gameInfo.game}`);
-                    continue;
-                }
+            const historicalResult = await resolveBetFromHistoricalData(bet);
+            
+            if (historicalResult && historicalResult.found) {
+                console.log(`🏛️ RESOLVED FROM HISTORICAL DATA! ${bet.game}`);
                 
-                const [, homeTeam, awayTeam] = gameMatch;
-                
-                // Get sport API key
-                const supportedSports = getSupportedSports();
-                const sportInfo = supportedSports.find(s => s.label === gameInfo.sport);
-                if (!sportInfo) {
-                    console.log(`❌ Unknown sport: ${gameInfo.sport}`);
-                    continue;
-                }
-                const sportKey = getApiSportKey(sportInfo.value);
-                
-                // Try each API key to get game results
-                let gameResult = null;
-                const apiKeys = config.server.odds.apiKeys;
-                
-                for (let i = 0; i < apiKeys.length; i++) {
-                    if (!apiKeys[i]) continue;
+                // Resolve the bet using historical data
+                if (historicalResult.betWon) {
+                    const winnings = calculateWinnings(bet.amount, bet.odds);
                     
-                    try {
-                        const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${apiKeys[i]}&daysFrom=3`;
-                        const response = await fetch(url);
-                        
-                        if (!response.ok) {
-                            console.log(`❌ API key ${i + 1} failed: ${response.status}`);
-                            continue;
-                        }
-                        
-                        const completedGames = await response.json();
-                        
-                        // Find matching game with STRICT date verification
-                        gameResult = completedGames.find(game => {
-                            const exactMatch = (game.home_team === homeTeam && game.away_team === awayTeam) ||
-                                             (game.home_team === awayTeam && game.away_team === homeTeam);
-                            
-                            if (!exactMatch) return false;
-                            
-                            // CRITICAL: Verify this is the same game by checking the date/time
-                            // The API game date should be within a reasonable window of our stored game date
-                            const apiGameDate = new Date(game.commence_time);
-                            const ourGameDate = new Date(gameInfo.game_date);
-                            const timeDiffHours = Math.abs(apiGameDate - ourGameDate) / (1000 * 60 * 60);
-                            
-                            // Allow up to 6 hours difference to account for timezone issues or minor API discrepancies
-                            const isDateMatch = timeDiffHours <= 6;
-                            
-                            if (!isDateMatch) {
-                                console.log(`⚠️ IGNORING: Found ${game.home_team} vs ${game.away_team} but date mismatch:`);
-                                console.log(`   API date: ${apiGameDate.toISOString()}`);
-                                console.log(`   Our date: ${ourGameDate.toISOString()}`);
-                                console.log(`   Difference: ${timeDiffHours.toFixed(1)} hours`);
-                                return false;
-                            }
-                            
-                            return true;
-                        });
-                        
-                        if (gameResult) {
-                            console.log(`✅ Found game result using API key ${i + 1}`);
-                            break;
-                        }
-                        
-                        break; // API call succeeded, even if no game found
-                        
-                    } catch (apiError) {
-                        console.log(`❌ API key ${i + 1} error:`, apiError.message);
-                    }
-                }
-                
-                // STRICT CHECK: Only settle if API explicitly confirms game is completed with valid scores
-                if (gameResult && 
-                    gameResult.completed === true && 
-                    gameResult.scores && 
-                    Array.isArray(gameResult.scores) && 
-                    gameResult.scores.length >= 2) {
-                    const homeScore = gameResult.scores.find(score => score.name === gameResult.home_team);
-                    const awayScore = gameResult.scores.find(score => score.name === gameResult.away_team);
-                    
-                    if (homeScore && awayScore && homeScore.score !== null && awayScore.score !== null) {
-                        const actualWinner = homeScore.score > awayScore.score ? gameResult.home_team : gameResult.away_team;
-                        actualScore = `${gameResult.home_team} ${homeScore.score} - ${awayScore.score} ${gameResult.away_team}`;
-                        
-                        // Map API winner to our team names
-                        gameWinner = (actualWinner === gameResult.home_team) ? homeTeam : awayTeam;
-                        
-                        // Use the game's actual completion time from API if available, otherwise use game date
-                        let gameCompletionTime;
-                        if (gameResult.last_update) {
-                            // API provides actual completion timestamp
-                            gameCompletionTime = new Date(gameResult.last_update).toISOString().replace('T', ' ').replace('Z', '');
-                        } else {
-                            // Fallback: estimate completion as 3.5 hours after game start (typical game length)
-                            const gameStart = new Date(gameInfo.game_date);
-                            const estimatedCompletion = new Date(gameStart.getTime() + (3.5 * 60 * 60 * 1000));
-                            gameCompletionTime = estimatedCompletion.toISOString().replace('T', ' ').replace('Z', '');
-                        }
-                        
-                        // ADDITIONAL SAFETY CHECK: Make sure completion time is after the scheduled start time
-                        const completionTimestamp = new Date(gameCompletionTime);
-                        const scheduledStart = new Date(gameInfo.game_date);
-                        
-                        if (completionTimestamp < scheduledStart) {
-                            console.log(`🚨 SAFETY VIOLATION: Game completion time (${gameCompletionTime}) is before scheduled start (${gameInfo.game_date})`);
-                            console.log(`❌ BLOCKING SETTLEMENT - This appears to be historical/wrong data`);
-                            throw new Error('Game completion time is before scheduled start time - blocking settlement');
-                        }
-                        
-                        console.log(`🏆 GAME COMPLETED: ${actualScore} - Winner: ${gameWinner} - Completed at: ${gameCompletionTime}`);
-                    } else {
-                        throw new Error('Game completed but scores not available');
-                    }
+                    // Update bet status and user balance
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            'UPDATE bets SET status = ?, status_changed_at = datetime(\'now\', \'utc\'), final_amount = ?, profit_loss = ? WHERE id = ?',
+                            ['won', winnings.totalPayout, winnings.winnings, bet.id],
+                            (err) => err ? reject(err) : resolve()
+                        );
+                    });
+
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            'UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id = ?',
+                            [winnings.totalPayout, bet.user_id],
+                            (err) => err ? reject(err) : resolve()
+                        );
+                    });
                 } else {
-                    // Game not completed yet, track for user info
-                    console.log(`⏳ Game not completed yet: ${gameInfo.game}`);
-                    
-                    pendingGames.push({
-                        game: gameInfo.game,
-                        sport: gameInfo.sport,
-                        status: gameResult ? 'In Progress' : 'Not Started',
-                        pendingBets: gameBets.length
+                    // Bet lost
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            'UPDATE bets SET status = ?, status_changed_at = datetime(\'now\', \'utc\'), final_amount = ?, profit_loss = ? WHERE id = ?',
+                            ['lost', 0, -bet.amount, bet.id],
+                            (err) => err ? reject(err) : resolve()
+                        );
                     });
-                    
-                    continue;
                 }
                 
-            } catch (error) {
-                console.log(`⏭️  Cannot get results for ${gameInfo.game}: ${error.message}`);
-                console.log(`❌ SETTLEMENT STOPPED - No API confirmation that game is completed`);
+                totalResolvedGames++;
+                historicalResolutions++;
                 
-                // Track failed API checks for user transparency
-                failedChecks.push({
-                    game: gameInfo.game,
-                    sport: gameInfo.sport,
-                    reason: `API Error: ${error.message}`,
-                    pendingBets: gameBets.length
-                });
+                // Find or create game result entry
+                let existingGameResult = gameResults.find(gr => gr.game === bet.game);
+                if (!existingGameResult) {
+                    existingGameResult = { game: bet.game, winners: 0, losers: 0 };
+                    gameResults.push(existingGameResult);
+                }
                 
-                continue; // Skip this game - DO NOT SETTLE without API confirmation
+                if (historicalResult.betWon) {
+                    existingGameResult.winners++;
+                } else {
+                    existingGameResult.losers++;
+                }
+                
+            } else {
+                console.log(`📝 No historical data found for: ${bet.game} - will check API`);
+                unresolvedBets.push(bet);
             }
+        }
+
+        console.log(`🏛️ Historical DB Results: ${historicalResolutions} bets resolved`);
+
+        // STEP 2: For remaining bets, use API (with automatic storage for future use)
+        if (unresolvedBets.length > 0) {
+            console.log(`\n📡 STEP 2: Checking API for ${unresolvedBets.length} remaining bets...`);
             
-            // Check for any previously settled bets that need result changes
-            const alreadySettledBets = gameBets.filter(bet => bet.status !== 'pending');
-            for (const settledBet of alreadySettledBets) {
-                const wasWinner = settledBet.status === 'won';
-                const shouldBeWinner = settledBet.team === gameWinner;
-                
-                if (wasWinner !== shouldBeWinner) {
-                    console.log(`🔄 RESULT CHANGE: Bet ${settledBet.id} (${settledBet.team}) was ${settledBet.status}, should be ${shouldBeWinner ? 'won' : 'lost'}`);
-                    
-                    if (shouldBeWinner) {
-                        // Previously lost, now won - need to calculate winnings and update balance
-                        const winnings = settledBet.odds > 0 ? (settledBet.amount * settledBet.odds / 100) : (settledBet.amount * 100 / Math.abs(settledBet.odds));
-                        const finalAmount = roundToTwoDecimals(settledBet.amount + winnings);
-                        const profitLoss = roundToTwoDecimals(winnings);
-                        
-                        // Add back the original bet amount + winnings
-                        await new Promise((resolve, reject) => {
-                            db.run("UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id = ?",
-                                [finalAmount, settledBet.user_id], (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                });
-                        });
-                        
-                        // Update bet to won
-                        await new Promise((resolve, reject) => {
-                            db.run("UPDATE bets SET status = 'won', final_amount = ?, profit_loss = ? WHERE id = ?",
-                                [finalAmount, profitLoss, settledBet.id], (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                });
-                        });
-                    } else {
-                        // Previously won, now lost - need to remove winnings from balance
-                        const lostAmount = settledBet.final_amount || 0;
-                        
-                        // Remove the winnings from balance
-                        await new Promise((resolve, reject) => {
-                            db.run("UPDATE users SET balance = ROUND(balance - ?, 2) WHERE id = ?",
-                                [lostAmount, settledBet.user_id], (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                });
-                        });
-                        
-                        // Update bet to lost
-                        await new Promise((resolve, reject) => {
-                            db.run("UPDATE bets SET status = 'lost', final_amount = 0, profit_loss = ? WHERE id = ?",
-                                [-settledBet.amount, settledBet.id], (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                });
-                        });
-                    }
+            // Group by unique games to minimize API calls
+            const uniqueGames = {};
+            unresolvedBets.forEach(bet => {
+                const gameKey = `${bet.sport}:${bet.game}:${bet.game_date}`;
+                if (!uniqueGames[gameKey]) {
+                    uniqueGames[gameKey] = {
+                        sport: bet.sport,
+                        game: bet.game,
+                        game_date: bet.game_date,
+                        bets: []
+                    };
                 }
-            }
-
-            // Now settle the pending bets for this completed game
-            const pendingBets = gameBets.filter(bet => bet.status === 'pending');
-            const winners = pendingBets.filter(bet => bet.team === gameWinner);
-            const losers = pendingBets.filter(bet => bet.team !== gameWinner);
-
-            console.log(`🎯 Settling ${pendingBets.length} pending bets: ${winners.length} winners, ${losers.length} losers`);
-
-            // Process winning bets
-            for (const bet of winners) {
-                const winnings = bet.odds > 0 ? (bet.amount * bet.odds / 100) : (bet.amount * 100 / Math.abs(bet.odds));
-                const finalAmount = roundToTwoDecimals(bet.amount + winnings);
-                const profitLoss = roundToTwoDecimals(winnings);
-
-                try {
-                    // Update user balance
-                    await new Promise((resolve, reject) => {
-                        db.run("UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id = ?",
-                            [finalAmount, bet.user_id], (err) => {
-                                if (err) reject(err);
-                                else resolve();
-                            });
-                    });
-
-                    // Mark bet as won with actual game completion time
-                    await new Promise((resolve, reject) => {
-                        db.run("UPDATE bets SET status = 'won', status_changed_at = ?, final_amount = ?, profit_loss = ? WHERE id = ?",
-                            [gameCompletionTime, finalAmount, profitLoss, bet.id], (err) => {
-                                if (err) reject(err);
-                                else resolve();
-                            });
-                    });
-                } catch (error) {
-                    console.error(`Error processing winning bet ${bet.id}:`, error);
-                }
-            }
-
-            // Process losing bets
-            for (const bet of losers) {
-                try {
-                    // Mark bet as lost with actual game completion time
-                    await new Promise((resolve, reject) => {
-                        db.run("UPDATE bets SET status = 'lost', status_changed_at = ?, final_amount = 0, profit_loss = ? WHERE id = ?",
-                            [gameCompletionTime, -bet.amount, bet.id], (err) => {
-                                if (err) reject(err);
-                                else resolve();
-                            });
-                    });
-                } catch (error) {
-                    console.error(`Error processing losing bet ${bet.id}:`, error);
-                }
-            }
-
-            resolvedGames++;
-            gameResults.push({
-                game: gameInfo.game,
-                totalBets: gameBets.length,
-                winners: winners.length,
-                losers: losers.length,
-                result: actualScore
+                uniqueGames[gameKey].bets.push(bet);
             });
+
+            const apiKeys = config.server.odds.apiKeys;
+
+            for (const [gameKey, gameData] of Object.entries(uniqueGames)) {
+                console.log(`\n🔍 API check: ${gameData.game} (${gameData.sport})`);
+                
+                try {
+                    const gameMatch = gameData.game.match(/^(.+)\s+vs\s+(.+)$/);
+                    if (!gameMatch) continue;
+
+                    const [, team1, team2] = gameMatch;
+                    const sportKey = getApiSportKey(gameData.sport);
+                    if (!sportKey) continue;
+
+                    // Try API keys until we get data
+                    let completedGame = null;
+                    for (let i = 0; i < apiKeys.length; i++) {
+                        const apiKey = apiKeys[i];
+                        if (!apiKey) continue;
+
+                        try {
+                            const scoresUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${apiKey}&daysFrom=30`;
+                            const response = await fetch(scoresUrl);
+                            
+                            if (response.ok) {
+                                const scoresData = await response.json();
+                                
+                                completedGame = scoresData.find(game => {
+                                    const isMatch = (
+                                        (game.home_team.includes(team1) || team1.includes(game.home_team)) &&
+                                        (game.away_team.includes(team2) || team2.includes(game.away_team))
+                                    ) || (
+                                        (game.home_team.includes(team2) || team2.includes(game.home_team)) &&
+                                        (game.away_team.includes(team1) || team1.includes(game.away_team))
+                                    );
+                                    return isMatch && game.completed;
+                                });
+                                
+                                break; // Success with this API key
+                            }
+                        } catch (error) {
+                            console.log(`❌ API key ${i + 1} failed:`, error.message);
+                        }
+                    }
+
+                    if (!completedGame) {
+                        console.log(`⏳ Game not completed yet in API: ${gameData.game}`);
+                        continue;
+                    }
+
+                    console.log(`🏆 COMPLETED GAME FOUND IN API! ${completedGame.home_team} vs ${completedGame.away_team}`);
+
+                    const homeScore = completedGame.scores?.find(s => s.name === completedGame.home_team)?.score;
+                    const awayScore = completedGame.scores?.find(s => s.name === completedGame.away_team)?.score;
+
+                    if (homeScore === undefined || awayScore === undefined) continue;
+
+                    const winner = homeScore > awayScore ? completedGame.home_team : completedGame.away_team;
+
+                    // 🏛️ STORE RESULT PERMANENTLY for future use
+                    const gameResultForStorage = {
+                        sport: gameData.sport,
+                        game_date: gameData.game_date,
+                        home_team: completedGame.home_team,
+                        away_team: completedGame.away_team,
+                        home_score: homeScore,
+                        away_score: awayScore,
+                        winner: winner,
+                        game_id: completedGame.id
+                    };
+                    
+                    await storeGameResultPermanently(gameResultForStorage);
+                    console.log(`🏛️ Result stored for future use!`);
+
+                    let winners = 0;
+                    let losers = 0;
+
+                    // Resolve all bets for this game
+                    for (const bet of gameData.bets) {
+                        const betWon = winner.includes(bet.team) || bet.team.includes(winner);
+
+                        if (betWon) {
+                            const winnings = calculateWinnings(bet.amount, bet.odds);
+                            
+                            await new Promise((resolve, reject) => {
+                                db.run(
+                                    'UPDATE bets SET status = ?, status_changed_at = datetime(\'now\', \'utc\'), final_amount = ?, profit_loss = ? WHERE id = ?',
+                                    ['won', winnings.totalPayout, winnings.winnings, bet.id],
+                                    (err) => err ? reject(err) : resolve()
+                                );
+                            });
+
+                            await new Promise((resolve, reject) => {
+                                db.run(
+                                    'UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id = ?',
+                                    [winnings.totalPayout, bet.user_id],
+                                    (err) => err ? reject(err) : resolve()
+                                );
+                            });
+
+                            winners++;
+                        } else {
+                            await new Promise((resolve, reject) => {
+                                db.run(
+                                    'UPDATE bets SET status = ?, status_changed_at = datetime(\'now\', \'utc\'), final_amount = ?, profit_loss = ? WHERE id = ?',
+                                    ['lost', 0, -bet.amount, bet.id],
+                                    (err) => err ? reject(err) : resolve()
+                                );
+                            });
+
+                            losers++;
+                        }
+                    }
+
+                    gameResults.push({
+                        game: gameData.game,
+                        winners,
+                        losers
+                    });
+
+                    totalResolvedGames++;
+                    apiResolutions++;
+
+                } catch (error) {
+                    console.error(`❌ Error processing ${gameData.game}:`, error);
+                }
+            }
         }
 
-        console.log(`✅ Settled ${resolvedGames} completed games`);
+        // STEP 3: Trigger background collection for future improvements
+        console.log('\n🔄 STEP 3: Triggering background historical data collection...');
+        setTimeout(() => {
+            collectCompletedGamesForHistory().catch(err => 
+                console.log('Background collection error:', err.message)
+            );
+        }, 1000); // Run in background after response
 
-        // Provide comprehensive status to user
-        const totalPendingBets = pendingGames.reduce((sum, game) => sum + game.pendingBets, 0) + 
-                                failedChecks.reduce((sum, game) => sum + game.pendingBets, 0);
-
-        let message = `Checked ${allPendingBets.length} games with pending bets. `;
-        message += `Settled ${resolvedGames} completed games.`;
-        
-        if (pendingGames.length > 0) {
-            message += ` ${pendingGames.length} games still in progress.`;
-        }
-        
-        if (failedChecks.length > 0) {
-            message += ` ${failedChecks.length} games could not be verified due to API issues.`;
-        }
+        const message = totalResolvedGames > 0 
+            ? `🎯 HYBRID resolution complete! ${totalResolvedGames} games resolved (${historicalResolutions} from database, ${apiResolutions} from API)`
+            : '⏳ No completed games found for pending bets';
 
         res.json({
             success: true,
-            message: message,
-            resolvedGames,
+            message,
+            resolvedGames: totalResolvedGames,
+            historicalResolutions,
+            apiResolutions,
             gameResults,
-            pendingGames: pendingGames,
-            failedChecks: failedChecks,
-            summary: {
-                totalGamesChecked: allPendingBets.length,
-                gamesSettled: resolvedGames,
-                gamesStillPending: pendingGames.length,
-                gamesWithAPIErrors: failedChecks.length,
-                totalPendingBets: totalPendingBets
+            debugInfo: {
+                totalPendingBets: allPendingBets.length,
+                resolvedFromDatabase: historicalResolutions,
+                resolvedFromAPI: apiResolutions
             }
         });
 
     } catch (error) {
-        console.error('Error settling completed games:', error);
-        res.status(500).json({ error: 'Failed to settle completed games' });
+        console.error('❌ Error in hybrid game resolution:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to resolve completed games',
+            details: error.message
+        });
     }
 });
+
+// Helper function to calculate winnings (if not already defined)
+function calculateWinnings(betAmount, odds) {
+    let winnings;
+    if (odds > 0) {
+        // Positive odds (e.g., +150 means win $150 on $100 bet)
+        winnings = (betAmount * odds) / 100;
+    } else {
+        // Negative odds (e.g., -150 means bet $150 to win $100)
+        winnings = (betAmount * 100) / Math.abs(odds);
+    }
+    
+    return {
+        winnings: Math.round(winnings * 100) / 100,
+        totalPayout: Math.round((betAmount + winnings) * 100) / 100
+    };
+}
 
 /**
  * Clear all betting data - for testing purposes
@@ -2306,4 +2289,388 @@ app.listen(PORT, () => {
     // Set up automatic game count maintenance every 30 minutes
     setInterval(maintainGameCounts, 30 * 60 * 1000); // 30 minutes
     console.log('🔄 Automatic game count maintenance scheduled every 30 minutes');
+});
+
+/**
+ * HISTORICAL GAME RESULTS SYSTEM
+ * Permanent storage solution that eliminates the 3-day API limitation
+ */
+
+/**
+ * Stores a completed game result permanently in the database
+ * @param {Object} gameResult - Game result data
+ * @returns {Promise<boolean>} Success status
+ */
+const storeGameResultPermanently = async (gameResult) => {
+    try {
+        const { sport, game_date, home_team, away_team, home_score, away_score, winner, game_id } = gameResult;
+        
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT OR REPLACE INTO game_results 
+                 (sport, game_date, home_team, away_team, home_score, away_score, winner, game_id, completed_at, api_fetched_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'utc'), datetime('now', 'utc'))`,
+                [sport, game_date, home_team, away_team, home_score, away_score, winner, game_id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+        
+        console.log(`✅ Stored historical result: ${home_team} ${home_score}-${away_score} ${away_team} (${sport})`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error storing game result:', error);
+        return false;
+    }
+};
+
+/**
+ * Collects and stores completed games from the API for permanent historical storage
+ * This function runs automatically to build up our historical database
+ * @returns {Promise<number>} Number of games collected
+ */
+const collectCompletedGamesForHistory = async () => {
+    console.log('\n🏛️ COLLECTING COMPLETED GAMES FOR HISTORICAL STORAGE');
+    console.log('=======================================================');
+    
+    let totalCollected = 0;
+    const supportedSports = getSupportedSports();
+    const apiKeys = config.server.odds.apiKeys;
+    
+    for (const sport of supportedSports) {
+        try {
+            const sportKey = getApiSportKey(sport.value);
+            if (!sportKey) continue;
+            
+            console.log(`📊 Collecting ${sport.label} completed games...`);
+            
+            // Try each API key until we get data
+            let completedGames = null;
+            for (let i = 0; i < apiKeys.length; i++) {
+                const apiKey = apiKeys[i];
+                if (!apiKey) continue;
+
+                try {
+                    const scoresUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${apiKey}&daysFrom=3`;
+                    
+                    const response = await fetch(scoresUrl);
+                    if (response.ok) {
+                        completedGames = await response.json();
+                        console.log(`✅ Retrieved ${completedGames.length} completed ${sport.label} games from API`);
+                        break;
+                    } else {
+                        console.log(`❌ API key ${i + 1} failed for ${sport.label}: ${response.status}`);
+                    }
+                } catch (error) {
+                    console.log(`❌ API key ${i + 1} error for ${sport.label}:`, error.message);
+                }
+            }
+            
+            if (!completedGames) {
+                console.log(`⚠️ Could not fetch completed games for ${sport.label}`);
+                continue;
+            }
+            
+            // Store each completed game
+            let sportCollected = 0;
+            for (const game of completedGames) {
+                if (!game.completed || !game.scores) continue;
+                
+                const homeScore = game.scores.find(s => s.name === game.home_team)?.score;
+                const awayScore = game.scores.find(s => s.name === game.away_team)?.score;
+                
+                if (homeScore === undefined || awayScore === undefined) continue;
+                
+                const winner = homeScore > awayScore ? game.home_team : game.away_team;
+                
+                const gameResult = {
+                    sport: sport.label,
+                    game_date: game.commence_time,
+                    home_team: game.home_team,
+                    away_team: game.away_team,
+                    home_score: homeScore,
+                    away_score: awayScore,
+                    winner: winner,
+                    game_id: game.id
+                };
+                
+                const stored = await storeGameResultPermanently(gameResult);
+                if (stored) sportCollected++;
+            }
+            
+            console.log(`📈 ${sport.label}: ${sportCollected} games added to historical database`);
+            totalCollected += sportCollected;
+            
+        } catch (error) {
+            console.error(`❌ Error collecting ${sport.label} games:`, error);
+        }
+    }
+    
+    console.log(`\n📊 COLLECTION COMPLETE: ${totalCollected} historical games stored`);
+    console.log('=======================================================\n');
+    
+    return totalCollected;
+};
+
+/**
+ * Resolves a bet using historical game results from our permanent database
+ * @param {Object} bet - The bet to resolve
+ * @returns {Promise<Object|null>} Resolution result or null if not found
+ */
+const resolveBetFromHistoricalData = async (bet) => {
+    try {
+        // Parse team names from game string
+        const gameMatch = bet.game.match(/^(.+)\s+vs\s+(.+)$/);
+        if (!gameMatch) return null;
+        
+        const [, team1, team2] = gameMatch;
+        
+        // Check our historical database first
+        const historicalResult = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT * FROM game_results 
+                 WHERE sport = ? AND game_date = ?
+                 AND ((home_team LIKE ? OR home_team LIKE ?) 
+                      AND (away_team LIKE ? OR away_team LIKE ?))`,
+                [bet.sport, bet.game_date, `%${team1}%`, `%${team2}%`, `%${team1}%`, `%${team2}%`],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+        
+        if (historicalResult) {
+            console.log(`🏛️ Found historical result: ${historicalResult.home_team} ${historicalResult.home_score}-${historicalResult.away_score} ${historicalResult.away_team}`);
+            
+            // Determine if bet won
+            const betWon = historicalResult.winner.includes(bet.team) || bet.team.includes(historicalResult.winner);
+            
+            return {
+                found: true,
+                betWon: betWon,
+                winner: historicalResult.winner,
+                homeScore: historicalResult.home_score,
+                awayScore: historicalResult.away_score,
+                source: 'historical_database'
+            };
+        }
+        
+        return null;
+    } catch (error) {
+        console.error('❌ Error checking historical data:', error);
+        return null;
+    }
+};
+
+/**
+ * HISTORICAL DATA MANAGEMENT ENDPOINTS
+ * Admin tools for managing the permanent game results database
+ */
+
+/**
+ * Manually trigger historical data collection (admin endpoint)
+ */
+app.post('/api/admin/collect-historical-data', authenticateToken, async (req, res) => {
+    try {
+        console.log('🔧 MANUAL HISTORICAL DATA COLLECTION TRIGGERED');
+        console.log('===============================================');
+        
+        const collectedCount = await collectCompletedGamesForHistory();
+        
+        res.json({
+            success: true,
+            message: `✅ Manual collection complete! ${collectedCount} historical games collected and stored`,
+            gamesCollected: collectedCount,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('❌ Error in manual historical data collection:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to collect historical data',
+            details: error.message
+        });
+    }
+});
+
+/**
+ * Check historical database status (admin endpoint)
+ */
+app.get('/api/admin/historical-data-status', authenticateToken, async (req, res) => {
+    try {
+        // Get count of stored historical games by sport
+        const sportCounts = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT sport, 
+                       COUNT(*) as game_count,
+                       MIN(DATE(game_date)) as earliest_game,
+                       MAX(DATE(game_date)) as latest_game
+                FROM game_results 
+                GROUP BY sport
+                ORDER BY sport
+            `, [], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+
+        // Get total count
+        const totalCount = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT COUNT(*) as total_games
+                FROM game_results
+            `, [], (err, row) => {
+                if (err) reject(err);
+                else resolve(row.total_games);
+            });
+        });
+
+        // Get recent additions
+        const recentGames = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT sport, home_team, away_team, home_score, away_score, winner, 
+                       DATE(game_date) as game_date, DATE(completed_at) as stored_date
+                FROM game_results 
+                ORDER BY completed_at DESC 
+                LIMIT 10
+            `, [], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+
+        res.json({
+            success: true,
+            totalStoredGames: totalCount,
+            sportBreakdown: sportCounts,
+            recentlyStored: recentGames,
+            systemStatus: 'active',
+            lastChecked: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('❌ Error checking historical data status:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get historical data status',
+            details: error.message
+        });
+    }
+});
+
+/**
+ * Manually resolve old stuck bets using historical data (admin endpoint)
+ */
+app.post('/api/admin/resolve-stuck-bets', authenticateToken, async (req, res) => {
+    try {
+        console.log('🔧 MANUAL STUCK BETS RESOLUTION');
+        console.log('=================================');
+        
+        // Get all pending bets older than 7 days
+        const oldPendingBets = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT id, user_id, game, team, amount, odds, sport, game_date,
+                       DATE(game_date) as game_date_only
+                FROM bets 
+                WHERE status = 'pending' 
+                AND DATE(game_date) <= DATE('now', '-7 days')
+                ORDER BY game_date ASC
+            `, [], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+
+        console.log(`📊 Found ${oldPendingBets.length} stuck bets older than 7 days`);
+
+        if (oldPendingBets.length === 0) {
+            return res.json({
+                success: true,
+                message: '✅ No stuck bets found!',
+                resolvedBets: 0
+            });
+        }
+
+        let resolvedCount = 0;
+        const resolvedDetails = [];
+
+        for (const bet of oldPendingBets) {
+            console.log(`🔍 Checking stuck bet: ${bet.game} (${bet.game_date_only})`);
+            
+            const historicalResult = await resolveBetFromHistoricalData(bet);
+            
+            if (historicalResult && historicalResult.found) {
+                console.log(`🏛️ RESOLVING STUCK BET: ${bet.game}`);
+                
+                if (historicalResult.betWon) {
+                    const winnings = calculateWinnings(bet.amount, bet.odds);
+                    
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            'UPDATE bets SET status = ?, status_changed_at = datetime(\'now\', \'utc\'), final_amount = ?, profit_loss = ? WHERE id = ?',
+                            ['won', winnings.totalPayout, winnings.winnings, bet.id],
+                            (err) => err ? reject(err) : resolve()
+                        );
+                    });
+
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            'UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id = ?',
+                            [winnings.totalPayout, bet.user_id],
+                            (err) => err ? reject(err) : resolve()
+                        );
+                    });
+
+                    resolvedDetails.push({
+                        game: bet.game,
+                        team: bet.team,
+                        amount: bet.amount,
+                        result: 'WON',
+                        payout: winnings.totalPayout
+                    });
+                } else {
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            'UPDATE bets SET status = ?, status_changed_at = datetime(\'now\', \'utc\'), final_amount = ?, profit_loss = ? WHERE id = ?',
+                            ['lost', 0, -bet.amount, bet.id],
+                            (err) => err ? reject(err) : resolve()
+                        );
+                    });
+
+                    resolvedDetails.push({
+                        game: bet.game,
+                        team: bet.team,
+                        amount: bet.amount,
+                        result: 'LOST',
+                        payout: 0
+                    });
+                }
+                
+                resolvedCount++;
+            } else {
+                console.log(`❓ No historical data available for: ${bet.game}`);
+            }
+        }
+
+        res.json({
+            success: true,
+            message: `🎯 Stuck bet resolution complete! ${resolvedCount} of ${oldPendingBets.length} bets resolved using historical data`,
+            totalStuckBets: oldPendingBets.length,
+            resolvedBets: resolvedCount,
+            resolvedDetails: resolvedDetails,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('❌ Error resolving stuck bets:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to resolve stuck bets',
+            details: error.message
+        });
+    }
 });
